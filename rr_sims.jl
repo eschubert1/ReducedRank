@@ -58,6 +58,7 @@ function tsvd(A, r)
 end
 
 # Compute best reduced rank r approximation (w.r.t. Frobenius norm) assuming Kronecker product structure between (estimated) row and column covariances
+# Note that the assumed Kronecker product structure is kron(Ccol, Crow)
 function rrkron(Y, Crow, Ccol, r)
  Srow = Crow # cov(Y')
  Scol = Ccol # cov(Y)
@@ -128,8 +129,13 @@ function frobenius_bounds(F, W, r)
 	s.*a
 end
 
-# Reduced Rank Steepest Descent, Algorithm 11 from Manton, Mahoney, and Hua (2003).
+# Reduced Rank Steepest Descent, Algorithm 11 from Manton, Mahoney, and Hua (2003) https://ieeexplore.ieee.org/abstract/document/1166684
+# X is the dense estimator, W is the weight matrix where the loss function is vec(X-R)'*inv(W)*vec(X-R), where R is the reduced rank approximation
+# X is n x m, r is the target rank. W should be nm x nm.
+# This algorithm applies the rank constraint through the null space of R, i.e. by finding an orthogonal m x m-r matrix N such that RN = 0.
+# It uses steepest descent to search for the minimizer of vec(X-R)'*inv(W)*vec(X-R)
 function rr_sd(X, W, n, m, r; tol=1e-4, verbose = false)
+ # Determine an initial constraint matrix N and a m x r matrix Nperp orthogonal to N via SVD of X
  XS = svd(X)
  M = XS.V
  N = M[:,(r+1):end]
@@ -138,42 +144,51 @@ function rr_sd(X, W, n, m, r; tol=1e-4, verbose = false)
  #N = M[:, 1:(m-r)]
  #Nperp = M[:, (m-r):m]
  repeat = true
- lambda = 1
- iter = 1
+ #lambda = 1 # Step size set here in IEEE paper 
+ iter = 1 # Count number of iterations and terminate after 1000 if algorithm does not converge
  while repeat
-	# 2
+ 	lambda = 1 # Set step size for new iteration  
+	# Step 2, Compute minimum of loss f(N), as given by Theorem 1 in IEEE paper
  	P = (kron(N', Matrix(I, n, n))*W*kron(N,Matrix(I, n, n))) \ vec(X*N)
  	fN = vec(X*N)'*P
 	if verbose
 		println(fN)
 	end
  
-	# 3
+	# 3, Compute descent direction K and its squared Frobenius norm K2
  	A = reshape(P, (n, m-r))
  	Q = W*vec(A*N')
  	B = reshape(Q, (n, m))
 	K = -2*Nperp'*(X-B)'*A
  	K2 = sum(K.^2)
 
- 	# 4
+ 	# 4, Evaluate g(N) = f(N + 2*lambda*Nperp*K). If f(N)-g(N) >= lambda * K2, update lambda = 2*lambda and repeat
+	# Terminate loop after 100 iterations if stopping condition not satisfied
  	check = true
  	ntry = 0
- 	while check
+ 	while check & ntry < 100
  		NK = N + 2*lambda*Nperp*K
  		PK = (kron(NK',Matrix(I, n, n))*W*kron(NK,Matrix(I, n, n))) \ vec(X*NK)
  		fNK = vec(X*NK)'*PK
  		fN - fNK >= lambda*K2 ? lambda = 2*lambda : check = false
 		ntry = ntry + 1
  	end	
-	# 5
+
+	# 5, Evaluate h(N) = f(N + lambda*Nperp*K). If f(N) - h(N) < 0.5*lambda*K2, set lambda = 0.5*lambda and repeat
+	# Skip this step if Step 4 was repeated at least once
+	# Terminate loop after 100 iterations if stopping condition not satisfied
 	ntry > 1 ? test = false : test = true
-	while test
+	nrep = 0
+	while test & nrep < 100
 		NK = N + lambda*Nperp*K
 		PK = (kron(NK',Matrix(I, n, n))*W*kron(NK,Matrix(I, n, n))) \ vec(X*NK)
         	fNK = vec(X*NK)'*PK
         	fN - fNK < 0.5*lambda*K2 ? lambda = 0.5*lambda : test = false
+		nrep = nrep + 1
  	end
-	# 6
+
+	# 6 Update N = N + lambda*Nperp*K. Renormalize by setting [N, Nperp] = Q, where Q is the Q-factor of the QR decomposition of (updated) N.
+	# Stop if K2/lambda < tol
  	N = N + lambda*Nperp*K
  	M = qr(N).Q
 	N = M[:,1:(m-r)]
@@ -185,6 +200,8 @@ function rr_sd(X, W, n, m, r; tol=1e-4, verbose = false)
 		repeat = false
 	end
  end
+
+ # Compute minimizer R using obtained constraint matrix N. See equation 4 in IEEE paper. Reshape result to appropriate dimensions
  R = vec(X) - (W*kron(N, Matrix(I, n, n)) / (kron(N', Matrix(I, n, n))*W*kron(N, Matrix(I, n, n))))*kron(N', Matrix(I, n, n))*vec(X)
  R = reshape(R, (n, m))
  R, N
