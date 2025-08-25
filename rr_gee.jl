@@ -50,8 +50,8 @@ end
 function mgeedata(nobs, ngroup, m, pm, pv, rank, Bm;rng=StableRNG(1), err_method=0)
  N = nobs*ngroup
 
- # Residual correlation for each outcome, each element sampled from U(0, 1)
- rr = rand(rng, m)
+ # Residual correlation for each outcome, spaced equally between 0.1 and 0.9
+ rr = range(0.1, 0.9, length=m)
 
  # Coefficients for scale model
  Bv = rand(rng, pv, m)
