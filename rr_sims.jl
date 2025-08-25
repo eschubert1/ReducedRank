@@ -129,6 +129,38 @@ function frobenius_bounds(F, W, r)
 	s.*a
 end
 
+# Function to efficiently perform the multiplication W*kron(N, I) where I is an nxn identity matrix
+function kronI(W, N, n; transpose = false)
+	m = size(W)[1]
+	p = size(N)[2]
+	if transpose # then compute kron(N', I)*W by looping through columns of W
+		m2 = size(W)[2]
+		A = zeros(n*p, m2)
+		for j in 1:p
+			for k in 1:n
+				inds = k:n:m
+				ii = (j-1)*n+k
+				for i in 1:m2
+					A[ii, i] = dot(W[inds, i],N[:,j])
+				end
+			end
+		end
+	else # Loop through rows of W, multiply subset of row by column of N 
+		A = zeros(m, n*p)
+		for i in 1:m
+			for j in 1:p
+				for k in 1:n
+					inds = k:n:m
+					ii = (j-1)*n+k
+					A[i,ii] = dot(W[i,inds],N[:,j])
+				end
+			end
+		end
+	end
+	A
+end
+			
+
 # Reduced Rank Steepest Descent, Algorithm 11 from Manton, Mahoney, and Hua (2003) https://ieeexplore.ieee.org/abstract/document/1166684
 # X is the dense estimator, W is the weight matrix where the loss function is vec(X-R)'*inv(W)*vec(X-R), where R is the reduced rank approximation
 # X is n x m, r is the target rank. W should be nm x nm.
@@ -149,14 +181,17 @@ function rr_sd(X, W, n, m, r; tol=1e-4, verbose = false)
  while repeat
  	lambda = 1 # Set step size for new iteration  
 	# Step 2, Compute minimum of loss f(N), as given by Theorem 1 in IEEE paper
- 	P = (kron(N', Matrix(I, n, n))*W*kron(N,Matrix(I, n, n))) \ vec(X*N)
- 	fN = vec(X*N)'*P
+ 	# P = (kron(N', Matrix(I, n, n))*W*kron(N,Matrix(I, n, n))) \ vec(X*N)
+ 	P = kronI(W, N, n)
+	P = kronI(P, N, n; transpose=true)
+	P1 = P \ vec(X*N)
+	fN = vec(X*N)' * P1
 	if verbose
 		println(fN)
 	end
  
 	# 3, Compute descent direction K and its squared Frobenius norm K2
- 	A = reshape(P, (n, m-r))
+ 	A = reshape(P1, (n, m-r))
  	Q = W*vec(A*N')
  	B = reshape(Q, (n, m))
 	K = -2*Nperp'*(X-B)'*A
@@ -166,23 +201,26 @@ function rr_sd(X, W, n, m, r; tol=1e-4, verbose = false)
 	# Terminate loop after 100 iterations if stopping condition not satisfied
  	check = true
  	ntry = 0
- 	while check & ntry < 100
+ 	while check && ntry < 100
  		NK = N + 2*lambda*Nperp*K
- 		PK = (kron(NK',Matrix(I, n, n))*W*kron(NK,Matrix(I, n, n))) \ vec(X*NK)
- 		fNK = vec(X*NK)'*PK
+ 		# PK = (kron(NK',Matrix(I, n, n))*W*kron(NK,Matrix(I, n, n))) \ vec(X*NK)
+		PK = kronI(W, NK, n)
+		PK = kronI(PK, NK, n; transpose=true)
+ 		fNK = vec(X*NK)' * (PK \ vec(X*NK))
  		fN - fNK >= lambda*K2 ? lambda = 2*lambda : check = false
 		ntry = ntry + 1
  	end	
-
 	# 5, Evaluate h(N) = f(N + lambda*Nperp*K). If f(N) - h(N) < 0.5*lambda*K2, set lambda = 0.5*lambda and repeat
 	# Skip this step if Step 4 was repeated at least once
 	# Terminate loop after 100 iterations if stopping condition not satisfied
 	ntry > 1 ? test = false : test = true
 	nrep = 0
-	while test & nrep < 100
+	while test && nrep < 100
 		NK = N + lambda*Nperp*K
-		PK = (kron(NK',Matrix(I, n, n))*W*kron(NK,Matrix(I, n, n))) \ vec(X*NK)
-        	fNK = vec(X*NK)'*PK
+		#PK = (kron(NK',Matrix(I, n, n))*W*kron(NK,Matrix(I, n, n))) \ vec(X*NK)
+        	PK = kronI(W, NK, n)
+		PK = kronI(PK, NK, n; transpose=true)
+		fNK = vec(X*NK)' * (PK \ vec(X*NK))
         	fN - fNK < 0.5*lambda*K2 ? lambda = 0.5*lambda : test = false
 		nrep = nrep + 1
  	end

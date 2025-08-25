@@ -30,13 +30,12 @@ pm = 10
 # Set number of scale covariates
 ps = 4
 
-i = 0
 for ni in ng
 	for mi in m
 		for ri in r
 			if ri < mi
-				i = i+1
-				outfile = open(string(outstr, i, ".txt"), "w")
+				println("Beginning new iteration:")
+				outfile = open(string(outstr, ni, "_", mi, "_", ri,".txt"), "w")	
 				R, B = sim_gee(n, ni, mi, pm, ps, ri, xlog; nsim=100)
 				flush(xlog)
 				out = round.(mean(R, dims=1); digits = 8)
