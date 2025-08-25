@@ -37,7 +37,7 @@ for ni in ng
 			if ri < mi
 				i = i+1
 				outfile = open(string(outstr, i, ".txt"), "w")
-				R, B = sim_gee(n, ni, mi, pm, ps, ri, xlog; nsim=100, method=2)
+				R, B = sim_gee(n, ni, mi, pm, ps, ri, xlog; nsim=100)
 				flush(xlog)
 				out = round.(mean(R, dims=1); digits = 8)
 				method = ["Dense GEE2", "Full WLRA", "Bhat SVD", "Yhat SVD", "Bhat KA", "Block WLRA", "Bhat CW", "Yhat CW"]

@@ -4,27 +4,7 @@ using Statistics
 using LinearAlgebra
 using Distributions
 
-import GLM
-using GLM: Link, LinPredModel, LinPred, ModResp, mueta, linkinv
-
 include("rr_sims.jl")
-
-# Copied from EstimatingEquationsRegression.jl
-const FP = AbstractFloat
-const FPVector{T<:FP} = AbstractArray{T,1}
-include("../EstimatingEquationsRegression.jl/src/linpred.jl")
-include("../EstimatingEquationsRegression.jl/src/varfunc.jl")
-
-# Copied from EstimatingEquationsRegression.jl
-function updateD!(p::EstimatingEquationsRegression.DensePred, dμdη::FPVector, i1::Int, i2::Int)
-    p.D = Diagonal(dμdη) * p.X[i1:i2, :]
-end
-
-geevar(d::Normal, v::EstimatingEquationsRegression.DefaultVar, mu::T, awt::T) where {T<:Real} = 1 / awt
-
-function covsolve(c::IndependenceCor, mu, sd, z)
-    return z ./ sd.^2
-end
 
 # Generate data for a multivariate GEE with given mean coefficients
 function mgeedata(nobs, ngroup, m, pm, pv, rank;rng=StableRNG(1))
@@ -152,7 +132,7 @@ function sas(A, B)
 end
 
 # Fit multivariate response GEE2 (or GEE1) model and construct reduced rank estimator via WLRA.
-function mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1), method=2)
+function mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1))
  N = nobs*ngroup
  write(xlog, "Generating data... \n")
  y, Bm, Bv, Xm, Xv, Xr, g = mgeedata(nobs, ngroup, m, pm, pv, rank, Bm; rng=rng)
@@ -161,94 +141,31 @@ function mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1), meth
     return [1., x1[2]+x2[2], abs(x1[2]-x2[2])]
  end
  
- if method == 2
-	mm = Array{Union{Nothing, GeneralizedEstimatingEquations2Model}}(nothing, m)
- else
- 	mm = Array{Union{Nothing, GeneralizedEstimatingEquationsModel}}(nothing, m)
- end
+ mm = Array{Union{Nothing, GeneralizedEstimatingEquations2Model}}(nothing, m)
  
  write(xlog, "Fitting GEE2 models... \n")
  for j in 1:m
- 	if method == 2
- 		mm[j] = fit(GeneralizedEstimatingEquations2Model, Xm, Xv, Xr, y[:, j], g, make_rcov; verbosity=0, cor_pair_factor=0.0)
-
-	else
-		mm[j] = fit(GeneralizedEstimatingEquationsModel, Xm, y[:,j], g; verbosity=0)
-	end
+ 	mm[j] = fit(GeneralizedEstimatingEquations2Model, Xm, Xv, Xr, y[:, j], g, make_rcov; verbosity=0, cor_pair_factor=0.0)
  end
  
  write(xlog, "Constructing covariance matrix... \n")
- if method == 2
- 	vc = vcov(mm...)
- else
- 	vc = zeros(pm*m, pm*m)
-	B = zeros(pm*m, pm*m)
-	for j in 1:m
-		 _iterprep(mm[j])
-    	end
-	for j in 1:m
-		jj = (1:pm) .+ pm*(j-1)
-		for k in (j+1):m
-			M = zeros(pm, pm)
-			jk = (1:pm) .+ pm*(k-1)
-			for l in 1:size(mm[j].rr.grpix, 2)
-        			# This should be the same for gee1 and gee2
-        			i1, i2 = mm[j].rr.grpix[:, l]
-
-        			_update_group(mm[j], l, false)
-        			_update_group(mm[k], l, false)
-
-       				# Update the meat for the mean parameters
-        			vc[jj, jj] .+= mm[j].pp.score_grp * mm[j].pp.score_grp'
-				M .+= mm[j].pp.score_grp * mm[k].pp.score_grp'
-			end
-			vc[jj, jk] = M
-			vc[jk, jj] = M'
-		end
-		B[jj, jj] = mm[j].cc.DtViD_sum
-	end
-	vc = B \ vc / B'
- end
-
- #mm1 = fit(GeneralizedEstimatingEquations2Model, Xm, Xv, Xr, y[:, 1], g, make_rcov;
- #         verbosity=2, cor_pair_factor=0.0)
- 
- #mm2 = fit(GeneralizedEstimatingEquations2Model, Xm, Xv, Xr, y[:, 2], g, make_rcov;
- #         verbosity=2, cor_pair_factor=0.0)
-
- #mm3 = fit(GeneralizedEstimatingEquations2Model, Xm, Xv, Xr, y[:, 3], g, make_rcov;
- #         verbosity=2, cor_pair_factor=0.0)
-
- #vc = vcov(mm1, mm2, mm3)
-
- # Print the correlations between parameter estimates for two responses.
- #mc = vc[1]
- #Diagonal(sqrt.(diag(mc[1:12, 1:12]))) \ mc[1:12, 13:24] / Diagonal(sqrt.(diag(mc[13:24, 13:24]))) |> diag |> display
+ vc = vcov(mm...)
 
  b = Array{Union{Nothing, Vector}}(nothing, m)
  for j in 1:m
- 	if method == 2
- 		b[j] = mm[j].mean_model.pp.beta0
- 	else
-		b[j] = mm[j].pp.beta0
-	end
+ 	b[j] = mm[j].mean_model.pp.beta0
  end
+ 
  Bhat = hcat(b...)
- #b1 = mm1.mean_model.pp.beta0
- #b2 = mm2.mean_model.pp.beta0
- #b3 = mm3.mean_model.pp.beta0
-
+ 
+ # Subset full covariance matrix to covariances between mean model parameters
  np = Int(div(size(vc[1], 1),m))
  ii = Vector{Union{Nothing,UnitRange{Int64}}}(nothing, m)
  for j in 1:m
   ii[j] = (1:pm) .+ np*(j-1)
  end
  inds = vcat(ii...)
- if method == 2
- 	mc = vc[1][inds,inds]
- else
- 	mc = vc
- end
+ mc = vc[1][inds,inds]
 
  write(xlog, "Computing Full WLRA... \n")
  # Compute WLRA to Bhat using the estimated covariance of Bhat
@@ -329,14 +246,14 @@ function mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1), meth
  #Bm, Bhat, Bkron, mc, Crow, Ccol
 end
 
-function sim_gee(nobs, ngroup, m, pm, pv, rank, xlog;nsim=100, rng=StableRNG(1), method=2)
+function sim_gee(nobs, ngroup, m, pm, pv, rank, xlog;nsim=100, rng=StableRNG(1))
  R = zeros(Float64, nsim, 16)
  # Coefficients for mean model
  Bm = genrr(pm, m, rank)
  write(xlog, "Beginning simulation: \n")
  for i in 1:nsim
  	write(xlog, string("Iteration #", i, ":\n"))
- 	a = mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=rng, method=method)
+ 	a = mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=rng)
 	R[i,:] = a
  end
  write(xlog, string("Finished ", nsim, " iterations. \n"))
