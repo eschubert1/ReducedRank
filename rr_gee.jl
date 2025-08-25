@@ -57,7 +57,14 @@ function mgeedata(nobs, ngroup, m, pm, pv, rank, Bm;rng=StableRNG(1), err_method
  Bv = rand(rng, pv, m)
 
  g = repeat(1:nobs, inner=ngroup)
- Xm = randn(rng, N, pm)
+ 
+ # Generate mean model design matrix with correlated columns
+ rm = 0.5625 # correlation parameter
+ X1 = randn(rng, N)
+ Xm = reshape(repeat(X1, pm-2), N, pm-2) + randn(rng, N, pm-2)*sqrt(rm)
+ Xm = hcat(ones(N), X1, Xm)
+
+ # Generate scale model design matrix
  Xv = randn(rng, N, pv)
  Xv[:, 1] .= 1
  Xr = randn(rng, N, 2)
