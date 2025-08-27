@@ -6,48 +6,18 @@ using Distributions
 
 include("rr_sims.jl")
 
-# Generate data for a multivariate GEE with given mean coefficients
-function mgeedata(nobs, ngroup, m, pm, pv, rank;rng=StableRNG(1))
- N = nobs*ngroup
-
- # Residual correlation for each outcome, each element sampled from U(-1,1)
- rr = 2 .* rand(rng, m) .- 1
-
- # Coefficients for mean model
- Bm = genrr(m, p, r)
- # Coefficients for scale model
- Bv = randn(rng, pv, m)
-
- g = repeat(1:nobs, inner=ngroup)
- Xm = randn(rng, N, pm)
- Xv = randn(rng, N, pv)
- Xv[:, 1] .= 1
- Xr = randn(rng, N, 2)
-
- Ey = Xm * Bm
- Vy = exp.(Xv * Bv)
- clamp!(Vy, 0.1, 20)
-
- # Generate additive errors with both row and column correlations.  The strength of the
- # correlations is controlled by the parameter 'f'.
- f = 0.5
- E = zeros(N, m)
- v = repeat(randn(nobs), inner=ngroup)
- ee = randn(N)
- for j in 1:m
-    u = repeat(randn(nobs), inner=ngroup)
-    u = sqrt(f)*v + sqrt(1-f)*u
-    e = sqrt(f)*ee + sqrt(1-f)*randn(N)
-    E[:, j] = sqrt.(Vy[:, j]) .* (sqrt(rr[j])*u + sqrt(1-rr[j])*e)
- end
-
- y = Ey + E
-
- y, Bm, Bv, Xm, Xv, Xr, g
-end
-
-# Generate data for a multivariate GEE with reduced rank mean coefficients
-function mgeedata(nobs, ngroup, m, pm, pv, rank, Bm;rng=StableRNG(1), err_method=0)
+# Generate data for a multivariate GEE with provided mean coefficient matrix Bm
+# The outcome data consists of 'm' response variables from 'nobs' clusters, with each cluster of size 'ngroup'.
+# The total sample size is N = nobs*ngroup
+# The mean model is of the form Xm*Bm, where Xm is an N x pm design matrix and Bm is a pm x m matrix of coefficients
+# The first column of Xm is all ones and the remaining columns are correlated
+# The scale model has linear predictor Xv*Bv where Xv is N x pv and Bv is pv x m, both are generated with N(0, 1) entries
+# The first column of Xv consists of all ones
+# The rng keyword specifies a stream for random number generation
+# The err_method keyword switches between options for generating correlated errors
+# The default(err_method = 0) constructs additive errors for both row and column correlations
+# The alternative (err_method = 1) generates an arbitrary covariance matrix for each cluster
+function mgeedata(nobs, ngroup, m, pm, pv, Bm;rng=StableRNG(1), err_method=0)
  N = nobs*ngroup
 
  # Residual correlation for each outcome, spaced equally between 0.1 and 0.9
@@ -61,15 +31,16 @@ function mgeedata(nobs, ngroup, m, pm, pv, rank, Bm;rng=StableRNG(1), err_method
  # Generate mean model design matrix with correlated columns
  rm = 0.5625 # correlation parameter
  X1 = randn(rng, N)
- Xm = reshape(repeat(X1, pm-2), N, pm-2) + randn(rng, N, pm-2)*sqrt(rm)
- Xm = hcat(ones(N), X1, Xm)
-
+ X2 = reshape(repeat(X1, pm-2), N, pm-2) + randn(rng, N, pm-2)*sqrt(rm)
+ Xm = hcat(ones(N), X1, X2)
+ 	
  # Generate scale model design matrix
  Xv = randn(rng, N, pv)
  Xv[:, 1] .= 1
  Xr = randn(rng, N, 2)
 
- Ey = Xm * Bm
+ Ey = Xm*Bm
+
  Vy = exp.(Xv * Bv)
  clamp!(Vy, 0.1, 10)
 
@@ -79,7 +50,7 @@ function mgeedata(nobs, ngroup, m, pm, pv, rank, Bm;rng=StableRNG(1), err_method
  else
  	# Generate additive errors with both row and column correlations.  The strength of the
  	# correlations is controlled by the parameter 'f'.
- 	f = 0.5
+ 	f = 0.9
  	E = zeros(N, m)
  	v = repeat(randn(nobs), inner=ngroup)
  	ee = randn(N)
@@ -97,6 +68,7 @@ function mgeedata(nobs, ngroup, m, pm, pv, rank, Bm;rng=StableRNG(1), err_method
 end
 
 # Generate clustered errors with cluster membership defined by groups, and m is the number of response variables
+# If a cluster Y is of size n x m, the generated covariance matrix corresponds to Cov(vec(Y)) of size nm x nm
 function clustered_errors(groups, m)
  N = length(groups)
  group_ids = unique(groups)
@@ -114,6 +86,7 @@ function clustered_errors(groups, m)
 end
 
 # Determine Singular Angle Similarity between two matrices, A and B, of the same size
+# This approach is from Albers et al. (2024), available at https://arxiv.org/abs/2403.17687. 
 function sas(A, B)
  Asvd = svd(A)
  Bsvd = svd(B)
@@ -138,11 +111,23 @@ function sas(A, B)
  sas
 end
 
-# Fit multivariate response GEE2 (or GEE1) model and construct reduced rank estimator via WLRA.
+# Fit multivariate GEE2 model, construct several reduced rank estimators, and compute Frobenius distance of estimators to
+# Bm, the true mean model coefficient matrix, and Ey = Xm*Bm, the true conditional mean of Y.
+# This function fits m GEE2 models separately, and then concatenates the mean coefficient estimates into a single matrix, Bhat.
+# The covariance of vec(Bhat) is estimated using vcov(mm), where mm is a list of the m GEE2 models.
+# Then, the dense estimate (Bhat) is computed with 7 reduced rank estimators:
+# 1) Brr, a reduced rank version of Bhat weighted by its covariance matrix using the steepest descent algorithm in Manton et al. (2003)
+# 2) Bsvd, the truncated singular value decomposition of Bhat
+# 3) Ysvd, the truncated singular value decomposition of the fitted values Yhat
+# 4) Bkron, a weighted truncated singular value decomposition using Crow, and Ccol, where kron(Ccol, Crow) is the best Kronecker approximation
+# to the covariance matrix of Bhat
+# 5) Bblock, a reduced rank version of Bhat weighted by the block diagonal components of its covariance matrix, using steepest descent
+# 6) Btr, a truncated singular value decomposition of Bhat weighted by C_trace, which is formed by taking the trace of blocks of the covariance matrix of Bhat
+# 7) Ytr, the fitted values analog corresponding to Btr.
 function mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1))
  N = nobs*ngroup
  write(xlog, "Generating data... \n")
- y, Bm, Bv, Xm, Xv, Xr, g = mgeedata(nobs, ngroup, m, pm, pv, rank, Bm; rng=rng)
+ y, Bm, Bv, Xm, Xv, Xr, g = mgeedata(nobs, ngroup, m, pm, pv, Bm; rng=rng)
 
  function make_rcov(x1, x2)
     return [1., x1[2]+x2[2], abs(x1[2]-x2[2])]
@@ -152,7 +137,7 @@ function mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1))
  
  write(xlog, "Fitting GEE2 models... \n")
  for j in 1:m
- 	mm[j] = fit(GeneralizedEstimatingEquations2Model, Xm, Xv, Xr, y[:, j], g, make_rcov; verbosity=0, cor_pair_factor=0.0)
+ 	mm[j] = fit(GeneralizedEstimatingEquations2Model, Xm, Xv, Xr, y[:, j], g, make_rcov; corstruct_mean=ExchangeableCor(), verbosity=0, cor_pair_factor=0.0)
  end
  
  write(xlog, "Constructing covariance matrix... \n")
@@ -183,7 +168,8 @@ function mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1))
  Bsvd = Bsvd.U*Diagonal(Bsvd.S)*Bsvd.Vt
 
  # Compute truncated singular value decomposition of fitted values
- Ysvd = tsvd(Xm*Bhat, rank)
+ Yhat = Xm*Bhat
+ Ysvd = tsvd(Yhat, rank)
  Ysvd = Ysvd.U*Diagonal(Ysvd.S)*Ysvd.Vt
 
  write(xlog, "Computing Kronecker approximation... \n")
@@ -220,7 +206,7 @@ function mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1))
  Btr = Btr.U*Diagonal(Btr.S)*Btr.Vt*sqrt(Ctrace)
 
  # Compute truncated SVD of Yhat weighted by Ctrace
- Ytr = tsvd(Xm*Bhat*Ctr_1, rank)
+ Ytr = tsvd(Yhat*Ctr_1, rank)
  Ytr = Ytr.U*Diagonal(Ytr.S)*Ytr.Vt*sqrt(Ctrace)
 
  write(xlog, "All estimators computed. \n\n")
@@ -244,15 +230,17 @@ function mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1))
  F7 = sqrt(sum((Xm*(Btr-Bm)).^2))
  F8 = sqrt(sum((Ytr - Xm*Bm).^2))
 
- # Compare differences of estimators using singular angle similarity
- #R1 = sas(Bhat, Bm)
- #R2 = sas(Brr, Bm)
- #R3 = sas(Bsvd, Bm)
-
  [R1, R2, R3, R4, R5, R6, R7, R8, F1, F2, F3, F4, F5, F6, F7, F8]
- #Bm, Bhat, Bkron, mc, Crow, Ccol
 end
 
+# A simulation to examine the performance of several GEE2-based reduced rank estimators of the mean coefficients
+# The mean model has the form Ey = Xm*Bm, where Bm is a pm x m coefficient matrix of given rank.
+# 'nsim' simulation iterations are computed (default 100), and at each iteration clustered data is generated
+# where 'nobs' is the number of clusters and 'ngroup' is the cluster size. m is the number of outcome variables,
+# pm is the number of mean model covariates, and pv is the number of scale model covariates.
+# xlog is an IO stream for logging results.
+# The function returns the performance of 8 estimators in 2 metrics (Frobenius distance to Bm and to Ey)
+# for each iteration, as well as the generated mean coefficient matrix Bm (which is common to all iterations).
 function sim_gee(nobs, ngroup, m, pm, pv, rank, xlog;nsim=100, rng=StableRNG(1))
  R = zeros(Float64, nsim, 16)
  # Coefficients for mean model
@@ -263,13 +251,5 @@ function sim_gee(nobs, ngroup, m, pm, pv, rank, xlog;nsim=100, rng=StableRNG(1))
  	a = mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=rng)
 	R[i,:] = a
  end
- write(xlog, string("Finished ", nsim, " iterations. \n"))
- #out = round.(mean(R, dims=1); digits=8)
- #println("Frobenius distance to true coefficient matrix:")
- #println(["Dense GEE2", "Full WLRA", "Bhat SVD", "Yhat SVD", "Bhat KA", "Block WLRA", "Bhat CW", "Yhat CW"])
- #println(out[1:8])
- #println("Frobenius distance to mean of response:")
- #println(["Dense GEE2", "Full WLRA", "Bhat SVD", "Yhat SVD", "Bhat KA", "Block WLRA", "Bhat CW", "Yhat CW"])
- #println(out[9:16])
  R, Bm
 end

@@ -245,6 +245,7 @@ function rr_sd(X, W, n, m, r; tol=1e-4, verbose = false)
  R, N
 end
 
+# A function which takes a matrix A and returns a matrix with 100*pct of its entries randomly set to 0.
 function mask(A; pct=0.1)
  dims = size(A)
  N = round(pct*dims[1]*dims[2])
@@ -297,6 +298,7 @@ function simulate(n, m, p, r, B, C, Cinv, Crow, Ccol)
  [R0, R1, R2, R3, R4, R5, F0, F1, F2, F3, F4, F5]
 end
 
+# A simulation which generates correlated data and examines the performance of several GLS based reduced rank estimators, using Mahalanobis distance.
 function rr_sim(n, m, p, r; nsim=100, scale=1)
  B = genrr(p, m, r)
  C = gencov(n*m, scale)

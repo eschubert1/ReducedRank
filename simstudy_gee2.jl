@@ -19,10 +19,10 @@ n = 300 #[100, 500, 1000]
 ng = [2, 5, 10, 20, 30]
 
 # Set number of responses
-m = [3] #[3, 5, 8]
+m = [3, 5, 8]
 
 # Set rank of mean coefficient matrix r < m
-r = [2] #[2, 3, 4]
+r = [2, 3, 4]
 
 # Set number of mean covariates
 pm = 10
@@ -63,5 +63,4 @@ for ni in ng
 	end
 end
 
-#close(outfile)
 close(xlog)
