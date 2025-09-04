@@ -7,7 +7,7 @@ using PrettyTables
 
 include("rr_gee.jl")
 
-outstr = "gee2_simresults_"
+outstr = "results/gee2_simresults_"
 #outfile = open("gee2_simresults.txt", "w")
 
 xlog = open("gee2_simlog.txt", "w")
@@ -16,13 +16,13 @@ xlog = open("gee2_simlog.txt", "w")
 n = 300 #[100, 500, 1000]
 
 # Set cluster size
-ng = [2, 5, 10, 20, 30]
+ng = [20] #[2, 5, 10, 20, 30]
 
 # Set number of responses
-m = [3, 5, 8]
+m = [8] # [3, 5, 8]
 
 # Set rank of mean coefficient matrix r < m
-r = [2, 3, 4]
+r = [4] # [2, 3, 4]
 
 # Set number of mean covariates
 pm = 10

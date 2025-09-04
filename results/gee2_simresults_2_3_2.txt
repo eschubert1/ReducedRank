@@ -1,0 +1,23 @@
+Number of clusters: 300, Cluster size: 2
+Number of responses: 3, Number of mean covariates: 10, Number of scale covariates: 4
+Rank of mean coefficient matrix: 2
+Best result was Yhat CW: 0.20234288
+Frobenius distance to true coefficient matrix:
+["Dense GEE2", "Full WLRA", "Bhat SVD", "Yhat SVD", "Bhat KA", "Block WLRA", "Bhat CW", "Yhat CW"]
+[0.32594906, 0.20476786, 0.28270692, 0.27994901, 0.20397802, 0.29253752, 0.21144902, 0.20234288]
+Frobenius distance to mean response: 
+["Dense GEE2", "Full WLRA", "Bhat SVD", "Yhat SVD", "Bhat KA", "Block WLRA", "Bhat CW", "Yhat CW"]
+[4.81269301, 3.40133536, 4.49028001, 4.25975013, 3.39166351, 4.42011511, 3.99698006, 3.36680941]
+ Mean model coefficient matrix: 
+  -0.801306    0.765039   -0.745956
+  -1.09797     -3.0889    1.9462
+  -2.50169     -3.78288   2.09891
+  -0.0667042   -2.27625   1.61675
+  0.768881     -2.61196   2.0631
+  -1.26149     3.9453     -3.14089
+  -1.44912     2.43551    -2.10379
+  2.19432      2.20167    -1.04001
+  -1.66496     -4.05911   2.50287
+  1.20678      -3.22144   2.60808
+
+

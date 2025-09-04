@@ -1,0 +1,23 @@
+Number of clusters: 300, Cluster size: 20
+Number of responses: 3, Number of mean covariates: 10, Number of scale covariates: 4
+Rank of mean coefficient matrix: 2
+Best result was Full WLRA: 0.08416698
+Frobenius distance to true coefficient matrix:
+["Dense GEE2", "Full WLRA", "Bhat SVD", "Yhat SVD", "Bhat KA", "Block WLRA", "Bhat CW", "Yhat CW"]
+[0.0909033, 0.08416698, 0.08755757, 0.08744813, 0.08418615, 0.08669094, 0.08489694, 0.08465281]
+Frobenius distance to mean response: 
+["Dense GEE2", "Full WLRA", "Bhat SVD", "Yhat SVD", "Bhat KA", "Block WLRA", "Bhat CW", "Yhat CW"]
+[4.49820144, 4.08851235, 4.36945455, 4.30746763, 4.15969147, 4.23357417, 4.29121019, 4.15436669]
+ Mean model coefficient matrix: 
+  0.0271822   -0.745556   1.33782
+  1.11273     0.0519752   1.51233
+  0.834018    0.985021    -0.514397
+  -3.08686    -3.23821    1.194
+  -0.58002    0.0750101   -0.966164
+  0.215335    0.158038    0.0349026
+  -4.10745    -3.62161    0.391694
+  -2.49384    -2.16476    0.178408
+  -4.42666    -3.77376    0.196892
+  3.34461     2.39181     0.651609
+
+
