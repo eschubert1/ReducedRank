@@ -23,13 +23,13 @@ write(param_log, string("Simulation run on: ", current_date, "\nParameters:\n"))
 num_clusters = 300 #[100, 500, 1000]
 
 # Set cluster size
-cluster_sizes = [20] #[2, 5, 10, 20, 30]
+cluster_sizes = [5] #[2, 5, 10, 20, 30]
 
 # Set number of responses
-num_responses = [8] # [3, 5, 8]
+num_responses = [3] # [3, 5, 8]
 
 # Set rank of mean coefficient matrix r < m
-r = [4] # [2, 3, 4]
+r = [2] # [2, 3, 4]
 
 # Set number of mean covariates
 num_mean_covariates = 10
@@ -37,12 +37,12 @@ num_mean_covariates = 10
 # Set number of scale covariates
 num_scale_covariates = 4
 
-write(param_log, string("Number of clusters: ", n, "\n"))
-write(param_log, string("Cluster sizes: ", ng, "\n"))
-write(param_log, string("Number of responses: ", m, "\n"))
+write(param_log, string("Number of clusters: ", num_clusters, "\n"))
+write(param_log, string("Cluster sizes: ", cluster_sizes, "\n"))
+write(param_log, string("Number of responses: ", num_responses, "\n"))
 write(param_log, string("Ranks of mean coefficient matrices: ", r, "\n"))
-write(param_log, string("Number of mean model covariates: ", pm, "\n"))
-write(param_log, string("Number of scale model covariates: ", ps, "\n"))
+write(param_log, string("Number of mean model covariates: ", num_mean_covariates, "\n"))
+write(param_log, string("Number of scale model covariates: ", num_scale_covariates, "\n"))
 close(param_log)
 
 for ni in cluster_sizes
@@ -51,24 +51,27 @@ for ni in cluster_sizes
 			if ri < mi
 				println("Beginning new iteration:")
 				outfile = open(string(outstr, ni, "_", mi, "_", ri,".txt"), "w")	
-				R, B = sim_gee(num_clusters, ni, mi, num_mean_covariates, num_scale_covariates, ri, sim_progress_log; nsim=100)
-				flush(xlog)
-				out = round.(mean(R, dims=1); digits = 8)
-				method = ["Dense GEE2", "Full WLRA", "Bhat SVD", "Yhat SVD", "Bhat KA", "Block WLRA", "Bhat CW", "Yhat CW"]
+				R, B = sim_gee(num_clusters, ni, mi, num_mean_covariates, num_scale_covariates, ri, sim_progress_log; nsim=10)
+				flush(sim_progress_log)
+				means = mean(R, dims=1)
+				sds = sqrt.(var(R, dims=1) ./ size(R, 1))
+				lower = means - 1.96.*sds
+				upper = means + 1.96*sds
+				results = hcat(means, sds, lower, upper)
+				results = reshape(results, 18, 4)
+				columns = ["Mean distance", "Std dev", "Lower CI", "Upper CI"]
+				method = ["Dense GEE2", "Full WLRA", "Bhat SVD", "Yhat SVD", "Bhat KA", "Block WLRA", "OlS RR", "Yhat RR", "Yhat CW"]
 				write(outfile, string("Number of clusters: ", num_clusters, ", Cluster size: ", ni, "\n"))
-				write(outfile, string("Number of responses: ", mi, ", Number of mean covariates: ", num_mean_covariates, ", Number of scale covariates: ", num_scale_covariates, "\n"))
+				write(outfile, string("Number of responses: ", mi, 
+						      ", Number of mean covariates: ", num_mean_covariates,
+						      ", Number of scale covariates: ", num_scale_covariates, "\n"))
 				write(outfile, string("Rank of mean coefficient matrix: ", ri, "\n"))
-				bestout = findmin(out[1:8])
+				bestout = findmin(means[1:9])
 				write(outfile, string("Best result was ", method[bestout[2]], ": ", bestout[1], "\n"))
-				write(outfile, "Frobenius distance to true coefficient matrix:\n")
-				show(outfile, method)
-				write(outfile, "\n")
-				show(outfile, out[1:8])
-				write(outfile, "\n")
-				write(outfile, "Frobenius distance to mean response: \n")
-				show(outfile, method)
-				write(outfile, "\n")
-				show(outfile, out[9:16])
+				write(outfile, "\nFrobenius distance to true coefficient matrix:\n")
+				pretty_table(outfile, results[1:9,:]; header=columns, row_labels=method)
+				write(outfile, "\nFrobenius distance to mean response: \n")
+				pretty_table(outfile, results[10:18,:]; header=columns, row_labels=method)
 				write(outfile, "\n Mean model coefficient matrix: \n")
 				pretty_table(outfile, B; tf=tf_borderless, show_header=false, alignment=:l)
 				write(outfile, "\n\n")

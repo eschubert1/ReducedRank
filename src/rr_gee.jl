@@ -124,12 +124,15 @@ end
 # 4) Bkron, a weighted truncated singular value decomposition using Crow, and Ccol, where kron(Ccol, Crow) is the best Kronecker approximation
 # to the covariance matrix of Bhat
 # 5) Bblock, a reduced rank version of Bhat weighted by the block diagonal components of its covariance matrix, using steepest descent
-# 6) Btr, a truncated singular value decomposition of Bhat weighted by C_trace, which is formed by taking the trace of blocks of the covariance matrix of Bhat
-# 7) Ytr, the fitted values analog corresponding to Btr.
+# 6) Yrr, classical reduced rank (OLS) regression on the fitted values with estimator weighted by residual matrix inner product.
+# 7) Yresid, truncated svd of Yhat weighted by rrhat = (Y-Yhat)'*(Y-Yhat)
+# 8) Ytr, a truncated singular value decomposition of Yhat weighted by C_trace, which is formed by taking the trace of blocks of the covariance matrix of Bhat
 function mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1))
  N = nobs*ngroup
  write(xlog, "Generating data... \n")
  y, Bm, Bv, Xm, Xv, Xr, g = mgeedata(nobs, ngroup, m, pm, pv, Bm; rng=rng)
+
+ N = ngroup*nobs
 
  function make_rcov(x1, x2)
     return [1., x1[2]+x2[2], abs(x1[2]-x2[2])]
@@ -149,9 +152,9 @@ function mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1))
  for j in 1:m
  	b[j] = mm[j].mean_model.pp.beta0
  end
- 
+
  Bhat = hcat(b...)
- 
+
  # Subset full covariance matrix to covariances between mean model parameters
  np = Int(div(size(vc[1], 1),m))
  ii = Vector{Union{Nothing,UnitRange{Int64}}}(nothing, m)
@@ -173,6 +176,17 @@ function mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1))
  Yhat = Xm*Bhat
  Ysvd = tsvd(Yhat, rank)
  Ysvd = Ysvd.U*Diagonal(Ysvd.S)*Ysvd.Vt
+
+ # Compute classical RR estimator
+ Yols = Xm*inv(Xm'*Xm)*Xm'*y
+ rrhat = (y-Yols)'*(y-Yols) / N
+ Yrr = tsvd(Yols*sqrt(inv(rrhat)), rank)
+ Yrr = Yrr.U*Diagonal(Yrr.S)*Yrr.Vt*sqrt(rrhat)
+
+ # Compute residual weighted GEE based estimator
+ rrhat = (y-Yhat)'*(y-Yhat) / N
+ Yresid = tsvd(Yhat*sqrt(inv(rrhat)), rank)
+ Yresid = Yresid.U*Diagonal(Yresid.S)*Yresid.Vt*sqrt(rrhat)
 
  write(xlog, "Computing Kronecker approximation... \n")
  # Compute Kronecker approximation to estimated covariance matrix of Bhat
@@ -202,12 +216,8 @@ function mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1))
 	end
  end
 
- # Compute truncated SVD of Bhat weighted by Ctrace
- Ctr_1 = sqrt(inv(Ctrace))
- Btr = tsvd(Bhat*Ctr_1, rank)
- Btr = Btr.U*Diagonal(Btr.S)*Btr.Vt*sqrt(Ctrace)
-
  # Compute truncated SVD of Yhat weighted by Ctrace
+ Ctr_1 = sqrt(inv(Ctrace))
  Ytr = tsvd(Yhat*Ctr_1, rank)
  Ytr = Ytr.U*Diagonal(Ytr.S)*Ytr.Vt*sqrt(Ctrace)
 
@@ -219,8 +229,9 @@ function mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1))
  R4 = sqrt(sum(((Xm \ Ysvd)-Bm).^2))
  R5 = sqrt(sum((Bkron-Bm).^2))
  R6 = sqrt(sum((Bblock-Bm).^2))
- R7 = sqrt(sum((Btr-Bm).^2))
- R8 = sqrt(sum(((Xm \ Ytr)-Bm).^2))
+ R7 = sqrt(sum(((Xm \ Yrr)-Bm).^2))
+ R8 = sqrt(sum(((Xm \ Yresid)-Bm).^2))
+ R9 = sqrt(sum(((Xm \ Ytr)-Bm).^2))
 
  # Compare distance of estimators to mean of response via Frobenius norm
  F1 = sqrt(sum((Xm*(Bhat-Bm)).^2))
@@ -229,10 +240,11 @@ function mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1))
  F4 = sqrt(sum((Ysvd - Xm*Bm).^2))
  F5 = sqrt(sum((Xm*(Bkron-Bm)).^2))
  F6 = sqrt(sum((Xm*(Bblock-Bm)).^2))
- F7 = sqrt(sum((Xm*(Btr-Bm)).^2))
- F8 = sqrt(sum((Ytr - Xm*Bm).^2))
+ F7 = sqrt(sum((Yrr - Xm*Bm).^2))
+ F8 = sqrt(sum((Yresid-Xm*Bm).^2))
+ F9 = sqrt(sum((Ytr - Xm*Bm).^2))
 
- [R1, R2, R3, R4, R5, R6, R7, R8, F1, F2, F3, F4, F5, F6, F7, F8]
+ [R1, R2, R3, R4, R5, R6, R7, R8, R9, F1, F2, F3, F4, F5, F6, F7, F8, F9]
 end
 
 # A simulation to examine the performance of several GEE2-based reduced rank estimators of the mean coefficients
@@ -244,7 +256,7 @@ end
 # The function returns the performance of 8 estimators in 2 metrics (Frobenius distance to Bm and to Ey)
 # for each iteration, as well as the generated mean coefficient matrix Bm (which is common to all iterations).
 function sim_gee(nobs, ngroup, m, pm, pv, rank, xlog;nsim=100, rng=StableRNG(1))
- R = zeros(Float64, nsim, 16)
+ R = zeros(Float64, nsim, 18)
  # Coefficients for mean model
  Bm = genrr(pm, m, rank)*10
  write(xlog, "Beginning simulation: \n")
