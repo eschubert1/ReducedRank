@@ -6,17 +6,24 @@ using Distributions
 
 include("rr_sims.jl")
 
-# Generate data for a multivariate GEE with provided mean coefficient matrix Bm
-# The outcome data consists of 'm' response variables from 'nobs' clusters, with each cluster of size 'ngroup'.
-# The total sample size is N = nobs*ngroup
-# The mean model is of the form Xm*Bm, where Xm is an N x pm design matrix and Bm is a pm x m matrix of coefficients
-# The first column of Xm is all ones and the remaining columns are correlated
-# The scale model has linear predictor Xv*Bv where Xv is N x pv and Bv is pv x m, both are generated with N(0, 1) entries
-# The first column of Xv consists of all ones
-# The rng keyword specifies a stream for random number generation
-# The err_method keyword switches between options for generating correlated errors
-# The default(err_method = 0) constructs additive errors for both row and column correlations
-# The alternative (err_method = 1) generates an arbitrary covariance matrix for each cluster
+"""
+	mgeedata(nobs, ngroup, m, pm, pv, Bm; rng=StableRNG(1), err_method=0)
+
+Generate data for a multivariate GEE with provided mean coefficient matrix Bm.
+
+Data is generated at three levels:
+ - the conditional mean of y: E(y) = Xm*Bm
+ - the scale of y: Var(y) = exp.(Xv*Bv)
+ - the correlation of y, which is generated differently depending on the choice of err_method:
+  1) For each each cluster of size ni x m, generate a general (ni x m)x(ni x m) positive definite correlation matrix 
+  2) (Default) generate Gaussian noise such that different responses in a cluster have correlation f=0.9
+     and different rows in a cluster for the j^th response have correlation rr[j], where rr = range(0.1, 0.9, length=m)
+
+Additionally, the columns of Xm are generated to be correlated with each other. The outcome data consists of 'm' 
+response variables from 'nobs' clusters, with each cluster of size 'ngroup' so that the total sample size is 
+N = nobs*ngroup. Xm and Xv have dimensions N x pm and N x pv, respectively, while Bm and Bv have dimension
+pm x m and pv x m, respectively. The rng keyword can be used to set a specific random number generation stream.
+"""
 function mgeedata(nobs, ngroup, m, pm, pv, Bm;rng=StableRNG(1), err_method=0)
  N = nobs*ngroup
 
@@ -39,7 +46,7 @@ function mgeedata(nobs, ngroup, m, pm, pv, Bm;rng=StableRNG(1), err_method=0)
  # Generate scale model design matrix
  Xv = randn(rng, N, pv)
  Xv[:, 1] .= 1
- Xr = randn(rng, N, 2)
+ Xr = hcat(ones(N), randn(N))
 
  Ey = Xm*Bm
 
@@ -69,8 +76,12 @@ function mgeedata(nobs, ngroup, m, pm, pv, Bm;rng=StableRNG(1), err_method=0)
  y, Bm, Bv, Xm, Xv, Xr, g
 end
 
-# Generate clustered errors with cluster membership defined by groups, and m is the number of response variables
-# If a cluster Y is of size n x m, the generated covariance matrix corresponds to Cov(vec(Y)) of size nm x nm
+"""
+	clustered_errors(groups, m)
+
+Generate clustered errors with cluster membership defined by groups, and m is the number of response variables.
+If a cluster Y is of size n x m, the generated covariance matrix corresponds to Cov(vec(Y)) of size nm x nm
+"""
 function clustered_errors(groups, m)
  N = length(groups)
  group_ids = unique(groups)
@@ -87,8 +98,12 @@ function clustered_errors(groups, m)
  E
 end
 
-# Determine Singular Angle Similarity between two matrices, A and B, of the same size
-# This approach is from Albers et al. (2024), available at https://arxiv.org/abs/2403.17687. 
+"""
+	sas(A, B)
+
+Computes the Singular Angle Similarity between two matrices, A and B, of the same size.
+Singular Angle Similarity is defined in Albers et al. (2024), available at https://arxiv.org/abs/2403.17687.
+"""
 function sas(A, B)
  Asvd = svd(A)
  Bsvd = svd(B)
@@ -113,20 +128,24 @@ function sas(A, B)
  sas
 end
 
-# Fit multivariate GEE2 model, construct several reduced rank estimators, and compute Frobenius distance of estimators to
-# Bm, the true mean model coefficient matrix, and Ey = Xm*Bm, the true conditional mean of Y.
-# This function fits m GEE2 models separately, and then concatenates the mean coefficient estimates into a single matrix, Bhat.
-# The covariance of vec(Bhat) is estimated using vcov(mm), where mm is a list of the m GEE2 models.
-# Then, the dense estimate (Bhat) is computed with 7 reduced rank estimators:
-# 1) Brr, a reduced rank version of Bhat weighted by its covariance matrix using the steepest descent algorithm in Manton et al. (2003)
-# 2) Bsvd, the truncated singular value decomposition of Bhat
-# 3) Ysvd, the truncated singular value decomposition of the fitted values Yhat
-# 4) Bkron, a weighted truncated singular value decomposition using Crow, and Ccol, where kron(Ccol, Crow) is the best Kronecker approximation
-# to the covariance matrix of Bhat
-# 5) Bblock, a reduced rank version of Bhat weighted by the block diagonal components of its covariance matrix, using steepest descent
-# 6) Yrr, classical reduced rank (OLS) regression on the fitted values with estimator weighted by residual matrix inner product.
-# 7) Yresid, truncated svd of Yhat weighted by rrhat = (Y-Yhat)'*(Y-Yhat)
-# 8) Ytr, a truncated singular value decomposition of Yhat weighted by C_trace, which is formed by taking the trace of blocks of the covariance matrix of Bhat
+"""
+	mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1))
+
+Fit multivariate GEE2 model, construct several reduced rank estimators, and compute Frobenius distance of estimators to
+Bm, the true mean model coefficient matrix, and Ey = Xm*Bm, the true conditional mean of Y.
+This function fits m GEE2 models separately, and then concatenates the mean coefficient estimates into a single matrix, Bhat.
+The covariance of vec(Bhat) is estimated using vcov(mm), where mm is a list of the m GEE2 models.
+Then, the dense estimate (Bhat) is computed with 7 reduced rank estimators:
+1) Brr, a reduced rank version of Bhat weighted by its covariance matrix using the steepest descent algorithm in Manton et al. (2003)
+2) Bsvd, the truncated singular value decomposition of Bhat
+3) Ysvd, the truncated singular value decomposition of the fitted values Yhat
+4) Bkron, a weighted truncated singular value decomposition using Crow, and Ccol, where kron(Ccol, Crow) is the best Kronecker approximation
+to the covariance matrix of Bhat
+5) Bblock, a reduced rank version of Bhat weighted by the block diagonal components of its covariance matrix, using steepest descent
+6) Yrr, classical reduced rank (OLS) regression on the fitted values with estimator weighted by residual matrix inner product.
+7) Yresid, truncated svd of Yhat weighted by rrhat = (Y-Yhat)'*(Y-Yhat)
+8) Ytr, a truncated singular value decomposition of Yhat weighted by C_trace, which is formed by taking the trace of blocks of the covariance matrix of Bhat
+"""
 function mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1))
  N = nobs*ngroup
  write(xlog, "Generating data... \n")
@@ -247,14 +266,18 @@ function mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1))
  [R1, R2, R3, R4, R5, R6, R7, R8, R9, F1, F2, F3, F4, F5, F6, F7, F8, F9]
 end
 
-# A simulation to examine the performance of several GEE2-based reduced rank estimators of the mean coefficients
-# The mean model has the form Ey = Xm*Bm, where Bm is a pm x m coefficient matrix of given rank.
-# 'nsim' simulation iterations are computed (default 100), and at each iteration clustered data is generated
-# where 'nobs' is the number of clusters and 'ngroup' is the cluster size. m is the number of outcome variables,
-# pm is the number of mean model covariates, and pv is the number of scale model covariates.
-# xlog is an IO stream for logging results.
-# The function returns the performance of 8 estimators in 2 metrics (Frobenius distance to Bm and to Ey)
-# for each iteration, as well as the generated mean coefficient matrix Bm (which is common to all iterations).
+"""
+	sim_gee(nobs, ngroup, m, pm, pv, rank, xlog; nsim=100, rng=StableRNG(1))
+
+A simulation to examine the performance of several GEE2-based reduced rank estimators of the mean coefficients
+The mean model has the form Ey = Xm*Bm, where Bm is a pm x m coefficient matrix of given rank.
+'nsim' simulation iterations are computed (default 100), and at each iteration clustered data is generated
+where 'nobs' is the number of clusters and 'ngroup' is the cluster size. m is the number of outcome variables,
+pm is the number of mean model covariates, and pv is the number of scale model covariates.
+xlog is an IO stream for logging results.
+The function returns the performance of 8 estimators in 2 metrics (Frobenius distance to Bm and to Ey)
+for each iteration, as well as the generated mean coefficient matrix Bm (which is common to all iterations).
+"""
 function sim_gee(nobs, ngroup, m, pm, pv, rank, xlog;nsim=100, rng=StableRNG(1))
  R = zeros(Float64, nsim, 18)
  # Coefficients for mean model

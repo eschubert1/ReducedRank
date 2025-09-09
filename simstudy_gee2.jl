@@ -23,13 +23,13 @@ write(param_log, string("Simulation run on: ", current_date, "\nParameters:\n"))
 num_clusters = 300 #[100, 500, 1000]
 
 # Set cluster size
-cluster_sizes = [5] #[2, 5, 10, 20, 30]
+cluster_sizes = [2, 5, 10, 20, 30]
 
 # Set number of responses
-num_responses = [3] # [3, 5, 8]
+num_responses = [3, 5, 8]
 
 # Set rank of mean coefficient matrix r < m
-r = [2] # [2, 3, 4]
+r = [2, 3, 4]
 
 # Set number of mean covariates
 num_mean_covariates = 10

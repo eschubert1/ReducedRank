@@ -1,6 +1,4 @@
 
-
-# Modified from Google AI overview (how to concatenate files julia)
 function concatenate_files(input_files::Vector{String}, output_file::String)
     open(output_file, "w") do outfile
         for file_path in input_files
@@ -13,8 +11,11 @@ function concatenate_files(input_files::Vector{String}, output_file::String)
   #  close(output_file)
 end
 
+"""
+	gee_results(output_file::String)
 
-# Collect results from GEE2 simulations
+Concatenates all files in current working directory which begin with 'gee2_simresults_'
+"""
 function gee_results(output_file::String)
 	files = filter(f->isfile(f), readdir())
 	geefiles = first.(files, 16) .== "gee2_simresults_"

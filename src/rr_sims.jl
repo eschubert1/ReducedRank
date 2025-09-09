@@ -3,14 +3,23 @@
 using LinearAlgebra
 using Statistics
 
-# Generate random nxp orthogonal matrix
+"""
+	randorth(n, p)
+
+Generates a random n x p orthogonal matrix
+"""
 function randorth(n,p)
  Q,R = qr(randn(n,p))
  O = Q*Diagonal(sign.(diag(R)))
  O
 end
 
-# Generate random nxn covariance matrix
+"""
+	gencov(n, scale=1)
+
+Generate a random n x n positive definite covariance matrix.
+Scale uniformly multiplies the eigenvalues which are generated from U(0,1)
+"""
 function gencov(n, scale=1)
  Q = randorth(n,n)
  normalize!.(eachcol(Q))
@@ -18,7 +27,11 @@ function gencov(n, scale=1)
  Q*S*Q'
 end
 
-# Generate random nxp matrix of rank r<p
+"""
+	genrr(n, p, r)
+
+Generate a random n x p matrix of rank r < p
+"""
 function genrr(n,p,r)
  U = randorth(n,r)
  V = randorth(p,r)
@@ -26,14 +39,23 @@ function genrr(n,p,r)
  U*D*V'
 end
 
-# Generate AR(1) matrix of size n
-function ar1(n, scale, rho)
+"""
+	cs(n, scale, rho)
+
+Generate compound symmetry structured covariance matrix of size n
+Scale represents the variance (diagonal) terms, and rho is the correlation parameter
+"""
+function cs(n, scale, rho)
   S = zeros(n,n) .+ rho + diagm(repeat([1-rho], n))
   S = S.*scale
 end
 
-# Generate data and compute OLS estimate and fitted values
-# n = sample size, m = number of response variables, p = number of predictors, r = rank of coefficient matrix
+"""
+	gendat(n, m, p, r, B=nothing, C=nothing)
+
+Generate data and compute OLS estimate and fitted values
+n = sample size, m = number of response variables, p = number of predictors, r = rank of coefficient matrix
+"""
 function gendat(n, m, p, r, B=nothing, C=nothing)
  X = hcat(ones(n), randn(n, p-1))
  isnothing(B) ? B = genrr(p, m, r) : B=B
@@ -48,7 +70,11 @@ function gendat(n, m, p, r, B=nothing, C=nothing)
  Y, X, B, C, Yhat
 end
 
-# Compute truncated singular value decomposition of matrix A at rank r
+"""
+	tsvd(A, r)
+
+Compute truncated singular value decomposition of matrix A at rank r
+"""
 function tsvd(A, r)
  C = svd(A)
  Ur = C.U[:,1:r]
@@ -57,8 +83,13 @@ function tsvd(A, r)
  SVD(Ur, Sr, Vtr)
 end
 
-# Compute best reduced rank r approximation (w.r.t. Frobenius norm) assuming Kronecker product structure between (estimated) row and column covariances
-# Note that the assumed Kronecker product structure is kron(Ccol, Crow)
+"""
+	rrkron(Y, Crow, Ccol, r)
+
+Compute best reduced rank r approximation (w.r.t. Frobenius norm) assuming 
+Kronecker product structure between (estimated) row and column covariances
+Note that the assumed Kronecker product structure is kron(Ccol, Crow)
+"""
 function rrkron(Y, Crow, Ccol, r)
  Srow = Crow # cov(Y')
  Scol = Ccol # cov(Y)
@@ -76,16 +107,24 @@ function rrkron(Y, Crow, Ccol, r)
  Yrr
 end
 
-# Function to compute weighted Frobenius norm of matrix F-R, F is full rank R is reduced rank
-# Computes trace(W2^-1 (F-R)' W1^-1 (F-R))
+"""
+	rrdist(F, R, W1, W2)
+
+Function to compute weighted Frobenius norm of matrix F-R, F is full rank R is reduced rank
+Computes trace(W2^-1 (F-R)' W1^-1 (F-R))
+"""
 function rrdist(F, R, W1, W2)
  W1i = inv(W1)
  W2i = inv(W2)
  tr(W2i*(F-R)'*W1i*(F-R))
 end
 
-# Find the best (Frobenius) Kronecker product approximation B, C for matrix A.
-# B is of size m1 x n1, C of size m2 x n2, A of size m1 m1*m2 x n1*n2
+"""
+	kronapprox(A, C0, m1, n1, m2, n2)
+
+Find the best (Frobenius) Kronecker product approximation B, C for matrix A.
+B is of size m1 x n1, C of size m2 x n2, A of size m1 m1*m2 x n1*n2
+"""
 function kronapprox(A, C0, m1, n1, m2, n2)
  C = C0
  m = m1*m2
@@ -116,10 +155,15 @@ function kronapprox(A, C0, m1, n1, m2, n2)
  B,C
 end
 
-# MAY BE INCORRECT
-# Compute bounds for the minimal value of tr(vec(F-R)' W^-1 vec(F-R)) minimized over R, where R is a reduced rank r approximation of F
-# This minimal value is bounded by the lower and upper singular values of W1 multiplied by the sum
-# of the smallest r - 
+"""
+	frobenius_bounds(F, W, r)
+
+WARNING: MAY BE INCORRECT
+Compute bounds for the minimal value of tr(vec(F-R)' W^-1 vec(F-R)) 
+minimized over R, where R is a reduced rank r approximation of F
+This minimal value is bounded by the lower and upper singular values 
+of W1 multiplied by the sum of the smallest r singular values
+"""
 function frobenius_bounds(F, W, r)
 	W1 = inv(W)
 	Wsvd = svd(W1)
@@ -129,7 +173,11 @@ function frobenius_bounds(F, W, r)
 	s.*a
 end
 
-# Function to efficiently perform the multiplication W*kron(N, I) where I is an nxn identity matrix
+"""
+	kronI(W, N, n; transpose = false)
+
+Function to efficiently perform the multiplication W*kron(N, I) where I is an nxn identity matrix
+"""
 function kronI(W, N, n; transpose = false)
 	m = size(W)[1]
 	p = size(N)[2]
@@ -160,12 +208,18 @@ function kronI(W, N, n; transpose = false)
 	A
 end
 			
+"""
+	rr_sd(X, W, n, m, r; tol=1e-4, verbose=false)
 
-# Reduced Rank Steepest Descent, Algorithm 11 from Manton, Mahoney, and Hua (2003) https://ieeexplore.ieee.org/abstract/document/1166684
-# X is the dense estimator, W is the weight matrix where the loss function is vec(X-R)'*inv(W)*vec(X-R), where R is the reduced rank approximation
-# X is n x m, r is the target rank. W should be nm x nm.
-# This algorithm applies the rank constraint through the null space of R, i.e. by finding an orthogonal m x m-r matrix N such that RN = 0.
-# It uses steepest descent to search for the minimizer of vec(X-R)'*inv(W)*vec(X-R)
+Reduced Rank Steepest Descent, Algorithm 11 from Manton, Mahoney, and Hua (2003) 
+https://ieeexplore.ieee.org/abstract/document/1166684
+X is the dense estimator, W is the weight matrix where the loss function is 
+vec(X-R)'*inv(W)*vec(X-R), where R is the reduced rank approximation
+X is n x m, r is the target rank. W should be nm x nm.
+This algorithm applies the rank constraint through the null space of R, i.e. by finding an 
+orthogonal m x m-r matrix N such that RN = 0.
+It uses steepest descent to search for the minimizer of vec(X-R)'*inv(W)*vec(X-R)
+"""
 function rr_sd(X, W, n, m, r; tol=1e-4, verbose = false)
  # Determine an initial constraint matrix N and a m x r matrix Nperp orthogonal to N via SVD of X
  XS = svd(X)
@@ -245,7 +299,11 @@ function rr_sd(X, W, n, m, r; tol=1e-4, verbose = false)
  R, N
 end
 
-# A function which takes a matrix A and returns a matrix with 100*pct of its entries randomly set to 0.
+"""
+	mask(A; pct=0.1)
+
+A function which takes a matrix A and returns a matrix with 100*pct of its entries randomly set to 0.
+"""
 function mask(A; pct=0.1)
  dims = size(A)
  N = round(pct*dims[1]*dims[2])
@@ -255,10 +313,15 @@ function mask(A; pct=0.1)
  B
 end
 
-# Simulate one data set and compute reduced rank r approximation using 3 methods
-# The data are generated such that Y is n x m, X is n x p, B is p x m, C is mp x mp (the covariance of vec(Y)),
-# and Cinv is the inverse of C, where kron(Ccol, Crow) is a Kronecker product approximation to C,
-# where Crow should be n x n and Ccol should be m x m.
+"""
+	simulate(n, m, p, r, B, C, Cinv, Crow, Ccol)
+
+Simulate one data set and compute reduced rank r approximation using 3 methods
+The data are generated such that Y is n x m, X is n x p, 
+B is p x m, C is mp x mp (the covariance of vec(Y)),
+and Cinv is the inverse of C, where kron(Ccol, Crow) is a Kronecker product approximation to C,
+where Crow should be n x n and Ccol should be m x m.
+"""
 function simulate(n, m, p, r, B, C, Cinv, Crow, Ccol)
  Y, X, Bout, Cout, Yhat = gendat(n,m,p,r,B,C)
  Bhat = X \ Yhat
@@ -298,7 +361,12 @@ function simulate(n, m, p, r, B, C, Cinv, Crow, Ccol)
  [R0, R1, R2, R3, R4, R5, F0, F1, F2, F3, F4, F5]
 end
 
-# A simulation which generates correlated data and examines the performance of several GLS based reduced rank estimators, using Mahalanobis distance.
+"""
+	rr_sim(n, m, p, r; nsim=100, scale=1)
+
+A simulation which generates correlated data and examines the performance of 
+several GLS based reduced rank estimators, using Mahalanobis distance.
+"""
 function rr_sim(n, m, p, r; nsim=100, scale=1)
  B = genrr(p, m, r)
  C = gencov(n*m, scale)
@@ -322,17 +390,3 @@ function rr_sim(n, m, p, r; nsim=100, scale=1)
  results, B, C
 end
  
-	
-
- 
-
-
-
-
-
-
-
-
-
-
-
