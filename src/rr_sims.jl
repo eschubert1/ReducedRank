@@ -1,5 +1,5 @@
 # Simulations for understanding the performance of weighted reduced rank approximations
-
+using StableRNGs
 using LinearAlgebra
 using Statistics
 
@@ -8,8 +8,8 @@ using Statistics
 
 Generates a random n x p orthogonal matrix
 """
-function randorth(n,p)
- Q,R = qr(randn(n,p))
+function randorth(n,p; rng=StableRNG(1))
+ Q,R = qr(randn(rng, n,p))
  O = Q*Diagonal(sign.(diag(R)))
  O
 end
@@ -20,10 +20,10 @@ end
 Generate a random n x n positive definite covariance matrix.
 Scale uniformly multiplies the eigenvalues which are generated from U(0,1)
 """
-function gencov(n, scale=1)
- Q = randorth(n,n)
+function gencov(n, scale=1; rng=StableRNG(1))
+ Q = randorth(n,n; rng=rng)
  normalize!.(eachcol(Q))
- S = diagm(scale.*rand(Float64, n))
+ S = diagm(scale.*rand(rng, Float64, n))
  Q*S*Q'
 end
 
@@ -32,10 +32,10 @@ end
 
 Generate a random n x p matrix of rank r < p
 """
-function genrr(n,p,r)
- U = randorth(n,r)
- V = randorth(p,r)
- D = diagm(randn(r))
+function genrr(n,p,r; rng=StableRNG(1))
+ U = randorth(rng=rng,n,r)
+ V = randorth(rng=rng,p,r)
+ D = diagm(randn(rng,r))
  U*D*V'
 end
 
@@ -56,13 +56,13 @@ end
 Generate data and compute OLS estimate and fitted values
 n = sample size, m = number of response variables, p = number of predictors, r = rank of coefficient matrix
 """
-function gendat(n, m, p, r, B=nothing, C=nothing)
- X = hcat(ones(n), randn(n, p-1))
- isnothing(B) ? B = genrr(p, m, r) : B=B
+function gendat(n, m, p, r, B=nothing, C=nothing; rng=StableRNG(1))
+ X = hcat(ones(n), randn(rng,n, p-1))
+ isnothing(B) ? B = genrr(rng,p, m, r) : B=B
  Ey = X*B
- isnothing(C) ? C = Symmetric(gencov(m*n)) : C = Symmetric(C)
+ isnothing(C) ? C = Symmetric(gencov(rng,m*n)) : C = Symmetric(C)
  A = cholesky(C)
- E = A.L*randn(n*m)
+ E = A.L*randn(rng,n*m)
  Y = Ey + reshape(E, (n,m))
  XY = X'*Y
  Bhat = (X'*X) \ XY
@@ -322,8 +322,8 @@ B is p x m, C is mp x mp (the covariance of vec(Y)),
 and Cinv is the inverse of C, where kron(Ccol, Crow) is a Kronecker product approximation to C,
 where Crow should be n x n and Ccol should be m x m.
 """
-function simulate(n, m, p, r, B, C, Cinv, Crow, Ccol)
- Y, X, Bout, Cout, Yhat = gendat(n,m,p,r,B,C)
+function simulate(n, m, p, r, B, C, Cinv, Crow, Ccol; rng=StableRNG(1))
+ Y, X, Bout, Cout, Yhat = gendat(n,m,p,r,B,C;rng=rng)
  Bhat = X \ Yhat
  IX = kron(Matrix(I, m, m), X)
  Y0 = IX*inv(IX'*Cinv*IX)*IX'*Cinv*vec(Y) # GLS fitted values
@@ -367,15 +367,15 @@ end
 A simulation which generates correlated data and examines the performance of 
 several GLS based reduced rank estimators, using Mahalanobis distance.
 """
-function rr_sim(n, m, p, r; nsim=100, scale=1)
- B = genrr(p, m, r)
- C = gencov(n*m, scale)
+function rr_sim(n, m, p, r; nsim=100, scale=1, rng=StableRNG(1))
+ B = genrr(p, m, r; rng=rng)
+ C = gencov(n*m, scale; rng=rng)
  Cinv = inv(C)
  Ccol, Crow = kronapprox(C, float.(Matrix(I, n, n)), m, m, n, n)
  results = zeros(Float64, nsim, 12)
  for i in 1:nsim
 	println(i)
-	a = simulate(n, m, p, r, B, C, Cinv, Crow, Ccol)
+	a = simulate(n, m, p, r, B, C, Cinv, Crow, Ccol; rng=rng)
  	results[i,:] = a
  end
  out = round.(mean(results, dims=1); digits=8)

@@ -46,7 +46,7 @@ function mgeedata(nobs, ngroup, m, pm, pv, Bm;rng=StableRNG(1), err_method=0)
  # Generate scale model design matrix
  Xv = randn(rng, N, pv)
  Xv[:, 1] .= 1
- Xr = hcat(ones(N), randn(N))
+ Xr = hcat(ones(N), randn(rng, N))
 
  Ey = Xm*Bm
 
@@ -61,12 +61,12 @@ function mgeedata(nobs, ngroup, m, pm, pv, Bm;rng=StableRNG(1), err_method=0)
  	# correlations is controlled by the parameter 'f'.
  	f = 0.9
  	E = zeros(N, m)
- 	v = repeat(randn(nobs), inner=ngroup)
- 	ee = randn(N)
+ 	v = repeat(randn(rng, nobs), inner=ngroup)
+ 	ee = randn(rng, N)
  	for j in 1:m
-    		u = repeat(randn(nobs), inner=ngroup)
+    		u = repeat(randn(rng, nobs), inner=ngroup)
     		u = sqrt(f)*v + sqrt(1-f)*u
-    		e = sqrt(f)*ee + sqrt(1-f)*randn(N)
+    		e = sqrt(f)*ee + sqrt(1-f)*randn(rng, N)
     		E[:, j] = sqrt.(Vy[:, j]) .* (sqrt(rr[j])*u + sqrt(1-rr[j])*e)*sqrt(h[j])
  	end
  end
@@ -281,7 +281,7 @@ for each iteration, as well as the generated mean coefficient matrix Bm (which i
 function sim_gee(nobs, ngroup, m, pm, pv, rank, xlog;nsim=100, rng=StableRNG(1))
  R = zeros(Float64, nsim, 18)
  # Coefficients for mean model
- Bm = genrr(pm, m, rank)*10
+ Bm = genrr(pm, m, rank; rng=rng)
  write(xlog, "Beginning simulation: \n")
  for i in 1:nsim
  	write(xlog, string("Iteration #", i, ":\n"))
