@@ -1,5 +1,5 @@
 
-function concatenate_files(input_files::Vector{String}, output_file::String)
+function _concatenate_files(input_files::Vector{String}, output_file::String)
     open(output_file, "w") do outfile
         for file_path in input_files
             open(file_path, "r") do infile
@@ -14,12 +14,13 @@ end
 """
 	gee_results(output_file::String)
 
-Concatenates all files in current working directory which begin with 'gee2_simresults_'
+Concatenate all files in the results directory 
+which begin with 'gee2_simresults_'
 """
 function gee_results(output_file::String)
-	files = filter(f->isfile(f), readdir())
+	files = filter(f->isfile(f), readdir("results"))
 	geefiles = first.(files, 16) .== "gee2_simresults_"
 	geefiles = files[geefiles]
 	# Combine files
-	concatenate_files(geefiles, output_file)
+	_concatenate_files(geefiles, output_file)
 end

@@ -66,7 +66,7 @@ for ni in cluster_sizes
 						      ", Number of mean covariates: ", num_mean_covariates,
 						      ", Number of scale covariates: ", num_scale_covariates, "\n"))
 				write(outfile, string("Rank of mean coefficient matrix: ", ri, "\n"))
-				bestout = findmin(means[1:9])
+				bestout = findmin(means[10:18])
 				write(outfile, string("Best result was ", method[bestout[2]], ": ", bestout[1], "\n"))
 				write(outfile, "\nFrobenius distance to true coefficient matrix:\n")
 				pretty_table(outfile, results[1:9,:]; header=columns, row_labels=method)
