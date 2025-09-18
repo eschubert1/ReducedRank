@@ -3,3 +3,6 @@ results/
 
 # Ignore simulation logs
 logs/
+
+# Ignore slurm output
+slurm-*
