@@ -88,6 +88,7 @@ function mgeedata(nobs::Integer, ngroup::Integer, m::Integer, pm::Integer,
 end
 
 function _build_cov(Vy, rr, f, Xm, nobs, ngroup, m)
+ # Construct the theoretical covariance matrix of vec(Bhat)
  R = zeros(ngroup*m, ngroup*m)
  for i in 1:m
  	ii = (ngroup*(i-1)+1):(ngroup*i)
@@ -225,7 +226,7 @@ This function fits m GEE2 models separately, and then concatenates the
 mean coefficient estimates into a single matrix, Bhat.
 The covariance of vec(Bhat) is estimated using vcov(mm), 
 where mm is a list of the m GEE2 models.
-Then, the dense estimate (Bhat) is computed with 7 reduced rank estimators:
+Then, the dense estimate (Bhat) is computed with 8 reduced rank estimators:
 1) Brr, a reduced rank version of Bhat weighted by its covariance matrix using 
 the steepest descent algorithm in Manton et al. (2003)
 2) Bsvd, the truncated singular value decomposition of Bhat

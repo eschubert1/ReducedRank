@@ -1,0 +1,4 @@
+Cluster size,Number of responses,Rank,Estimator,Mean distance,Lower CI,Upper CI,Overlap Dense GEE2,Overlap Full WLRA,Overlap Bhat SVD,Overlap Yhat SVD,Overlap Bhat KA,Overlap Block WLRA,Overlap OlS RR,Overlap Yhat RR,Overlap Yhat CW
+2,3,2,Bhat KA,5.22245426757634,7.358411784495341,9.04750798334466,true,true,true,true,true,true,true,true,true
+2,5,2,Bhat KA,4.9736063929869845,9.42864688516611,14.211211202953965,true,true,true,true,true,true,true,true,true
+2,5,3,Yhat RR,5.386748397585521,6.083841409673714,7.01425727640619,true,true,true,true,true,true,true,true,true

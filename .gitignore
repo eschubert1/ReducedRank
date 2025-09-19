@@ -1,8 +1,11 @@
-# Ignore generated results
-results/
+# Ignore generated artifacts
+artifacts/*.jl
 
 # Ignore simulation logs
-logs/
+logs/*.txt
 
 # Ignore slurm output
 slurm-*
+
+# Ignore batch files
+*.sbat
