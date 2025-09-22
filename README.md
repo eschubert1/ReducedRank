@@ -6,13 +6,14 @@ Specifically, the project considers multivariate regression where
 the data consistent of independent clusters, and within each cluster 
 the observations are correlated. Additionally, the different response 
 variables are also correlated. We can express the model 
-for one cluster as Y~i~ = X~i~ B + E_i, where Y is n_i x m, X is n_i x p,
-B is p x m, and E_i is also n_i x m. B has rank r < m, and in this study 
+for one cluster as Y<sub>i</sub> = X<sub>i</sub>B + E<sub>i</sub>, where Y is n<sub>i</sub>
+x m, X is n<sub>i</sub> x p,
+B is p x m, and E<sub>i</sub> is also n<sub>i</sub> x m. B has rank r < m, and in this study 
 the rank of B is assumed to be known.
 
-Furthermore, in this framework, E(Y_i | X) = X_i B, 
-and Cov(vec(Y_i)|X) = Cov(vec(E_i)|X) = R,
-where R is an (n_i x m) x (n_i x m) covariance matrix. 
+Furthermore, in this framework, E(Y<sub>i</sub> | X) = X<sub>i</sub> B, 
+and Cov(vec(Y<sub>i</sub>)|X) = Cov(vec(E<sub>i</sub>)|X) = R,
+where R is an (n<sub>i</sub> x m) x (n<sub>i</sub> x m) covariance matrix. 
 The matrix R is not necessarily factorizable into row-wise and 
 colum-wise covariance matrices.
 
