@@ -39,7 +39,7 @@ curl -fsSL https://install.julialang.org | sh
    for this project is not yet available as a Julia package, and thus needs to be built
    locally. Placing EstimatingEquationsRegression.jl two parent directories above matches the path
    saved in this project's Manifest.toml and should minimize complications with building the package.
-4) Navigate to the directory in step 1.
+4) Navigate to the ReducedRank directory cloned in step 1.
 5) Run Julia by typing `julia` into the command line
 6) Press `]` to open Julia's package manager. First type `activate .` to activate a project in the current 
    directory, and then type `instantiate` to activate the virtual environment
@@ -47,7 +47,7 @@ curl -fsSL https://install.julialang.org | sh
    if these have not yet been installed.
 8) Hit the backspace key to return to the Julia REPL. Now you should be able to run the simulation
    by typing `include("simstudy_gee2.jl")` and hitting ENTER. To run tests, type `include("tests/runtests.jl")`
-   Note the simulation takes approximately 4 hours to run. The parameters for the simulation can be modified
+   Note the simulation takes approximately 24 hours to run. The parameters for the simulation can be modified
    by editing simstudy_gee2.jl
 
 

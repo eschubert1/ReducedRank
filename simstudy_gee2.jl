@@ -54,7 +54,7 @@ num_mean_covariates = 10
 num_scale_covariates = 4
 
 # Set number of simulation iterations
-num_sim_iterations = 2
+num_sim_iterations = 100
 
 write(param_log, string("Number of clusters: ", num_clusters, "\n"))
 write(param_log, string("Cluster sizes: ", cluster_sizes, "\n"))
@@ -142,12 +142,12 @@ for ni in cluster_sizes
 
 				# Find estimators which have overlapping 
 				# confidence intervals with the best estimator
-				overlap = lower[10:18] .<= upper[bestout[2]+8]
+				overlap = lower[10:18] .<= upper[bestout[2]+9]
 
 				# Save result summary to csv file
 				csv_results = [ni, mi, ri, method[bestout[2]],
-					       bestout[1], lower[bestout[2]+8],
-					       upper[bestout[2]+8]]
+					       bestout[1], lower[bestout[2]+9],
+					       upper[bestout[2]+9]]
 				csv_results = vcat(csv_results, overlap)
 				csv_results = join(csv_results, ",")
 				write(best_estimators, csv_results)

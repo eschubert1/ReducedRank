@@ -1,8 +1,5 @@
 # Ignore generated artifacts
-artifacts/*.jl
-
-# Ignore simulation logs
-logs/*.txt
+artifacts/*.txt
 
 # Ignore slurm output
 slurm-*

@@ -1,4 +1,4 @@
-Simulation run on: 2025-09-19
+Simulation run on: 2025-09-20
 
 Parameters:
 Number of clusters: 300
@@ -7,4 +7,4 @@ Number of responses: [3, 5, 8]
 Ranks of mean coefficient matrices: [2, 3, 4]
 Number of mean model covariates: 10
 Number of scale model covariates: 4
-Number of simulation iterations: 2
+Number of simulation iterations: 100
