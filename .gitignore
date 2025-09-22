@@ -1,6 +1,3 @@
-# Ignore generated artifacts
-artifacts/*.txt
-
 # Ignore slurm output
 slurm-*
 
