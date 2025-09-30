@@ -42,7 +42,7 @@ num_clusters = 300 #[100, 500, 1000]
 cluster_sizes = [2, 5, 10, 20, 30]
 
 # Set number of responses
-num_responses = [3, 5, 8]
+num_responses = [5] # [3, 5, 8]
 
 # Set rank of mean coefficient matrix r < m
 r = [2, 3, 4]
@@ -55,6 +55,9 @@ num_scale_covariates = 4
 
 # Set number of simulation iterations
 num_sim_iterations = 100
+
+# Set methods for generating error covariances
+cov_methods = [0,2]
 
 write(param_log, string("Number of clusters: ", num_clusters, "\n"))
 write(param_log, string("Cluster sizes: ", cluster_sizes, "\n"))
@@ -73,86 +76,92 @@ rng = StableRNG(482)
 
 for ni in cluster_sizes
 	for mi in num_responses
-		for ri in r
-			if ri < mi
-				println("Beginning new iteration:")
+		for e in cov_methods
+			for ri in r
+				if ri < mi
+					println("Beginning new iteration:")
 				
-				# Open new file
-				outfile = open(string(outstr, 
-						       ni, "_", mi, "_", 
-						       ri,".txt"), "w")	
+					# Open new file
+					outfile = open(string(outstr, 
+							       ni, "_", mi, "_", 
+							       e,"_",ri,".txt"), "w")
 				
-				R, B = sim_gee(num_clusters, 
-						ni, mi, num_mean_covariates, 
-						num_scale_covariates, ri, 
-						sim_progress_log; 
-						nsim=num_sim_iterations, 
-						rng=rng)
-				flush(sim_progress_log)
+					R, Rcov, B = sim_gee(num_clusters, 
+							ni, mi, num_mean_covariates, 
+							num_scale_covariates, ri, 
+							sim_progress_log; 
+							nsim=num_sim_iterations, 
+							rng=rng,
+							err_method=e)
+					flush(sim_progress_log)
 			
-				# Compute summary statistics
-				means = mean(R, dims=1)
-				sds = sqrt.(var(R, dims=1) ./ size(R, 1))
-				lower = means - 1.96.*sds
-				upper = means + 1.96*sds
-				results = hcat(means, sds, lower, upper)
-				results = reshape(results, 18, 4)
-				columns = ["Mean distance", "Std dev", 
-					   "Lower CI", "Upper CI"]
-				method = ["Dense GEE2", "Full WLRA", 
-					  "Bhat SVD", "Yhat SVD", "Bhat KA", 
-					  "Block WLRA", "OLS RR", "Yhat RR", 
-					  "Yhat CW"]
+					# Compute summary statistics
+					means = mean(R, dims=1)
+					sds = sqrt.(var(R, dims=1) ./ size(R, 1))
+					lower = means - 1.96.*sds
+					upper = means + 1.96*sds
+					results = hcat(means, sds, lower, upper)
+					results = reshape(results, 18, 4)
+					columns = ["Mean distance", "Std dev", 
+						   "Lower CI", "Upper CI"]
+					method = ["Dense GEE2", "Full WLRA", 
+						  "Bhat SVD", "Yhat SVD", "Bhat KA", 
+						  "Block WLRA", "OLS RR", "Yhat RR", 
+						  "Yhat CW"]
 
-				# Write results
-				write(outfile, string("Number of clusters: ", 
-						      num_clusters, 
-						      ", Cluster size: ", ni, 
-						      "\n"))
-				write(outfile, string("Number of responses: ", 
-						      mi, 
-					", Number of mean covariates: ", 
-					num_mean_covariates,
-					", Number of scale covariates: ", 
-					num_scale_covariates, "\n"))
-				write(outfile, string(
-				"Rank of mean coefficient matrix: ", ri, "\n"))
-				bestout = findmin(means[10:18])
-				write(outfile, string("Best result was ",
-						      method[bestout[2]], ": ",
-						      bestout[1], "\n"))
-				write(outfile, 
-			"\nFrobenius distance to true coefficient matrix:\n")
-				pretty_table(outfile, results[1:9,:];
-						      header=columns, 
-						      row_labels=method)
-				write(outfile, 
-			"\nFrobenius distance to mean response: \n")
-				pretty_table(outfile, results[10:18,:];
-						      header=columns, 
-						      row_labels=method)
-				write(outfile, 
-				     "\n Mean model coefficient matrix: \n")
-				pretty_table(outfile, B; 
-						      tf=tf_borderless, 
-						      show_header=false, 
-						      alignment=:l)
-				write(outfile, "\n\n")
-				close(outfile)
+					# Write results
+					write(outfile, string("Number of clusters: ", 
+							      num_clusters, 
+							      ", Cluster size: ", ni, 
+							      "\n"))
+					write(outfile, string("Number of responses: ", 
+							      mi, 
+						", Number of mean covariates: ", 
+						num_mean_covariates,
+						", Number of scale covariates: ", 
+						num_scale_covariates, "\n"))
+					write(outfile, string(
+					"Rank of mean coefficient matrix: ", ri, "\n"))
+					bestout = findmin(means[10:18])
+					write(outfile, string("Best result was ",
+							      method[bestout[2]], ": ",
+							      bestout[1], "\n"))
+					write(outfile, string("Mean estimation ",
+					"distance to true covariance matrix: ",
+					mean(Rcov)))
+					write(outfile, 
+				"\nFrobenius distance to true coefficient matrix:\n")
+					pretty_table(outfile, results[1:9,:];
+							      header=columns, 
+							      row_labels=method)
+					write(outfile, 
+				"\nFrobenius distance to mean response: \n")
+					pretty_table(outfile, results[10:18,:];
+							      header=columns, 
+							      row_labels=method)
+					write(outfile, 
+					     "\n Mean model coefficient matrix: \n")
+					pretty_table(outfile, B; 
+							      tf=tf_borderless, 
+							      show_header=false, 
+							      alignment=:l)
+					write(outfile, "\n\n")
+					close(outfile)
+					
+					# Find estimators which have overlapping 
+					# confidence intervals with the best estimator
+					overlap = lower[10:18] .<= upper[bestout[2]+9]
 
-				# Find estimators which have overlapping 
-				# confidence intervals with the best estimator
-				overlap = lower[10:18] .<= upper[bestout[2]+9]
-
-				# Save result summary to csv file
-				csv_results = [ni, mi, ri, method[bestout[2]],
-					       bestout[1], lower[bestout[2]+9],
-					       upper[bestout[2]+9]]
-				csv_results = vcat(csv_results, overlap)
-				csv_results = join(csv_results, ",")
-				write(best_estimators, csv_results)
-				write(best_estimators, "\n")
-				flush(best_estimators)
+					# Save result summary to csv file
+					csv_results = [ni, mi, ri, method[bestout[2]],
+						       bestout[1], lower[bestout[2]+9],
+						       upper[bestout[2]+9]]
+					csv_results = vcat(csv_results, overlap)
+					csv_results = join(csv_results, ",")
+					write(best_estimators, csv_results)
+					write(best_estimators, "\n")
+					flush(best_estimators)
+				end
 			end
 		end
 	end

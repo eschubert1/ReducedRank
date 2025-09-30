@@ -56,6 +56,8 @@ function mgeedata(nobs::Integer, ngroup::Integer, m::Integer, pm::Integer,
  Bv = rand(rng, pv, m)
 
  groups = repeat(1:nobs, inner=ngroup)
+ # Vector of positions within each group
+ group_position = repeat(1:ngroup, outer=nobs)
 
  # Generate mean model design matrix with correlated columns
  rm = 0.5625 # correlation parameter
@@ -63,43 +65,62 @@ function mgeedata(nobs::Integer, ngroup::Integer, m::Integer, pm::Integer,
  X2 = reshape(repeat(X1, pm-2), N, pm-2) + randn(rng, N, pm-2)*sqrt(rm)
  Xm = hcat(ones(N), X1, X2)
  	
- h = range(1, 5, m) # heteroscedasticity parameter
+ h = range(1, 5, m) # response-specific scale parameter
 
  # Generate scale model design matrix
- Xv = randn(rng, N, pv)
- Xv[:, 1] .= 1
- Xr = hcat(ones(N), randn(rng, N))
+ # Xv = randn(rng, N, pv)
+ Xv = hcat(ones(N), group_position) # Predict scale by group position 
+ Xr = hcat(ones(N), group_position) # Predict correlations by group position
 
  Ey = Xm*Bm
 
- Vy = exp.(Xv * Bv)
- clamp!(Vy, 0.1, 10)
- Vy = ones(N, m) # Remove scale model, heteroscedasticity through h only
+ #Vy = exp.(Xv * Bv)
+ #clamp!(Vy, 0.1, 10)
 
  if err_method == 1
-	E, C = clustered_errors(groups, m, Xm)
+	E, CovB = generate_errors(groups, m, Xm; rng=rng)
+ elseif err_method == 2
+ 	parms = (2, 3, 1)	
+	E, CovB = generate_errors(groups, m, Xm; rng=rng, 
+					  cov_method="spacetime", parms=parms)
  else
- 	# Generate additive errors with both row and column correlations.  
-	# The strength of the
- 	# correlations is controlled by the parameter 'f'.
- 	f = 0.9
- 	E = zeros(N, m)
- 	v = repeat(randn(rng, nobs), inner=ngroup)
- 	ee = randn(rng, N)
- 	for j in 1:m
-    		u = repeat(randn(rng, nobs), inner=ngroup)
-    		u = sqrt(f)*v + sqrt(1-f)*u
-    		e = sqrt(f)*ee + sqrt(1-f)*randn(rng, N)
-    		E[:, j] = (sqrt.(Vy[:, j]) .* (sqrt(rr[j])*u + 
-			sqrt(1-rr[j])*e)*sqrt(h[j]))
-	end
-	V = Vy*Diagonal(h)
-	C = _build_cov(V, rr, f, Xm, nobs, ngroup, m)
+	# Heteroscedasticity through group position
+ 	Vy = reshape(repeat(group_position, m), N, m)
+	f = 0.9
+	E, CovB = additive_cor(nobs, ngroup, m, Xm, Vy, f, rr, h; rng=rng)
  end
 
  y = Ey + E
 
- y, Bm, Bv, Xm, Xv, Xr, groups, C
+ y, Bm, Bv, Xm, Xv, Xr, groups, CovB
+end
+
+"""
+    additive_cor(nobs, ngroup, m, Xm, Vy, f, rr)
+
+Generate errors with row-wise and column-wise errors with its associated 
+covariance matrix
+"""
+function additive_cor(nobs, ngroup, m, Xm, Vy, f, rr, h; rng=StableRNG(1))
+ N = nobs*ngroup
+
+ # Generate additive errors with both row and column correlations.
+ # The strength of the
+ # correlations is controlled by the parameter 'f'.
+ 
+ E = zeros(N, m)
+ v = repeat(randn(rng, nobs), inner=ngroup)
+ ee = randn(rng, N)
+ for j in 1:m
+ 	u = repeat(randn(rng, nobs), inner=ngroup)
+  	u = sqrt(f)*v + sqrt(1-f)*u
+        e = sqrt(f)*ee + sqrt(1-f)*randn(rng, N)
+        E[:, j] = (sqrt.(Vy[:, j]) .* (sqrt(rr[j])*u +
+                        sqrt(1-rr[j])*e)*sqrt(h[j]))
+ end
+ V = Vy*Diagonal(h)
+ C = _build_cov(V, rr, f, Xm, nobs, ngroup, m)
+ E, C
 end
 
 function _build_cov(Vy, rr, f, Xm, nobs, ngroup, m)
@@ -152,7 +173,56 @@ function _build_cov(Vy, rr, f, Xm, nobs, ngroup, m)
 end
 
 """
-    clustered_errors(groups, m)
+    _spt_cov(space_lag, time_lag)
+
+Compute a non-separable spatio-temporal covariance function from
+Cressie and Huang 1999, Example 3.
+"""
+function _spt_cov(space_lag, time_lag; a=1, b=1, s2=1)
+ d = length(space_lag)
+ num = s2*(a^2*time_lag^2 + 1)
+ denom = ((a^2*time_lag^2+1)^2 + b^2*(space_lag*space_lag))^((d+1)/2)
+ num/denom
+end
+
+"""
+    space_time_cov(s_ix, t_ix)
+
+Compute space time covariance at specified points.
+"""
+function space_time_cov(s_ix, t_ix; parms)
+ 
+ ns = length(s_ix)
+ nt = length(t_ix)
+ n = ns*nt
+ points = hcat(repeat(s_ix, nt), repeat(t_ix, inner=ns))
+
+ a = parms[1]
+ b = parms[2]
+ s2 = parms[3]
+
+ # Compute lags and covariance
+ space_lags = zeros(n,n)
+ time_lags = zeros(n,n)
+ covs = zeros(n,n)
+ for i in 1:n
+ 	for j in 1:i
+		space_lags[i,j] = abs(points[i,1] - points[j,1])
+		time_lags[i,j] = abs(points[i,2] - points[j,2])
+		covs[i,j] = _spt_cov(space_lags[i,j], time_lags[i,j];
+						      a=a, b=b, s2=s2)
+		
+		space_lags[j,i] = space_lags[i,j]
+		time_lags[j,i] = time_lags[i,j]
+		covs[j,i] = covs[i,j]
+	end
+ end
+
+ covs
+end
+
+"""
+    generate_errors(groups, m, Xm)
 
 Generate clustered errors with cluster membership defined by groups.
 m is the number of response variables.
@@ -160,7 +230,8 @@ m is the number of response variables.
 If a cluster Y is of size n x m, the generated covariance matrix corresponds to
 Cov(vec(Y)) of size nm x nm
 """
-function clustered_errors(groups, m, Xm)
+function generate_errors(groups, m, Xm; cov_method="general", parms=(1,2),
+				 	rng=StableRNG(1))
  N = length(groups)
  group_ids = unique(groups)
  E = zeros(N, m)
@@ -170,7 +241,11 @@ function clustered_errors(groups, m, Xm)
  for i in group_ids
  	ii = findall(j->(j==i), groups)
  	ng = length(ii)
-	C = Symmetric(gencov(ng*m))
+	if cov_method == "spacetime"
+		C = Symmetric(space_time_cov(1:ng, 1:m; parms=parms))
+	else 
+		C = Symmetric(gencov(ng*m))
+	end 
 	for j in 1:m
 		jj = (ng*(j-1)+1):(ng*j)
 		xx = (pm*(j-1)+1):(pm*j)
@@ -186,7 +261,7 @@ function clustered_errors(groups, m, Xm)
 		end
 	end
 	A = cholesky(C)
- 	Eg = A.L*randn(ng*m)
+ 	Eg = A.L*randn(rng, ng*m)
 	Eg = reshape(Eg, (ng, m))
 	E[ii, :] = Eg
  end
@@ -265,105 +340,47 @@ the covariance matrix of Bhat
 function mgee_rr(nobs::Integer, ngroup::Integer, m::Integer, 
 				pm::Integer, pv::Integer, rank::Integer,
 				Bm::AbstractMatrix, xlog::IOStream;
-				rng=StableRNG(1))
+				rng=StableRNG(1), err_method=0)
  N = nobs*ngroup
  write(xlog, "Generating data... \n")
- y, Bm, Bv, Xm, Xv, Xr, g, C = mgeedata(nobs, ngroup, m, pm, pv, Bm; rng=rng)
+ y, Bm, Bv, Xm, Xv, Xr, g, C = mgeedata(nobs, ngroup, m, pm, pv, Bm;
+					      rng=rng, err_method=err_method)
 
  N = ngroup*nobs
 
- function make_rcov(x1, x2)
-    return [1., x1[2]+x2[2], abs(x1[2]-x2[2])]
- end
- 
- mm = Array{Union{Nothing, GeneralizedEstimatingEquations2Model}}(nothing, m)
- 
- write(xlog, "Fitting GEE2 models... \n")
- for j in 1:m
- 	mm[j] = fit(GeneralizedEstimatingEquations2Model, Xm, Xv, Xr, y[:, j],
-			g, make_rcov; corstruct_mean=ExchangeableCor(),
-			verbosity=0, cor_pair_factor=0.0)
- end
- 
- write(xlog, "Constructing covariance matrix... \n")
- vc = vcov(mm...)
-
- b = Array{Union{Nothing, Vector}}(nothing, m)
- for j in 1:m
- 	b[j] = mm[j].mean_model.pp.beta0
- end
-
- Bhat = hcat(b...)
-
- # Subset full covariance matrix to covariances between mean model parameters
- np = Int(div(size(vc[1], 1),m))
- ii = Vector{Union{Nothing,UnitRange{Int64}}}(nothing, m)
- for j in 1:m
-  ii[j] = (1:pm) .+ np*(j-1)
- end
- inds = vcat(ii...)
- mc = vc[1][inds,inds]
+ # Estimate mean coefficents and covariance matrix
+ Bhat, mc = dense_gee_estimates(Xm, Xv, Xr, y, g, xlog)
 
  # Compare estimated covariance matrix to population covariance matrix
- # println(sqrt(sum((C-mc).^2)))
+ covdist = sqrt(sum((C-mc).^2))
 
  write(xlog, "Computing Full WLRA... \n")
  # Compute WLRA to Bhat using the estimated covariance of Bhat
  Brr, Nrr = rr_sd(Bhat, mc, pm, m, rank; tol=1e-8)
  
  # Compute truncated singular value decomposition of Bhat
- Bsvd = tsvd(Bhat, rank)
- Bsvd = Bsvd.U*Diagonal(Bsvd.S)*Bsvd.Vt
+ Bsvd = tsvd_estimate(Bhat, rank)
 
  # Compute truncated singular value decomposition of fitted values
  Yhat = Xm*Bhat
- Ysvd = tsvd(Yhat, rank)
- Ysvd = Ysvd.U*Diagonal(Ysvd.S)*Ysvd.Vt
+ Ysvd = tsvd_estimate(Yhat, rank)
 
  # Compute classical RR estimator
- Yols = Xm*inv(Xm'*Xm)*Xm'*y
- rrhat = (y-Yols)'*(y-Yols) / N
- Yrr = tsvd(Yols*sqrt(inv(rrhat)), rank)
- Yrr = Yrr.U*Diagonal(Yrr.S)*Yrr.Vt*sqrt(rrhat)
+ Yrr = rr_ols(y, Xm, rank)
 
  # Compute residual weighted GEE based estimator
- rrhat = (y-Yhat)'*(y-Yhat) / N
- Yresid = tsvd(Yhat*sqrt(inv(rrhat)), rank)
- Yresid = Yresid.U*Diagonal(Yresid.S)*Yresid.Vt*sqrt(rrhat)
+ Yresid = rr_resid(y, Yhat, rank)
 
  write(xlog, "Computing Kronecker approximation... \n")
- # Compute Kronecker approximation to estimated covariance matrix of Bhat
- Ccol, Crow = kronapprox(mc, float.(Matrix(I, pm, pm)), m, m, pm, pm)
- # Determine low-rank approximation weighted by estimated 
- # row and column covariances
- Bkron = rrkron(Bhat, Crow, Ccol, rank)
-
- # Compute block covariance matrix of Bhat
- Cblock = zeros(m*pm, m*pm)
- for i in 1:m
- 	inds = (1+pm*(i-1)):(pm*i)
-	Cblock[inds, inds] = mc[inds, inds]
- end
+ Bkron = kron_estimate(Bhat, mc, rank)
 
  write(xlog, "Computing Block WLRA... \n")
  # Compute best WLRA based on Cblock
- Bblock, Nblock = rr_sd(Bhat, Cblock, pm, m, rank; tol=1e-8)
+ Bblock, Nblock = block_estimate(Bhat, mc, rank)
 
- # Estimate column covariance by taking trace of blocks of covariance of Bhat
- Ctrace = zeros(m, m)
- for i in 1:m
- 	inds1 = (1+pm*(i-1)):(pm*i)
-	for j in i:m
-		inds2 = (1+pm*(j-1)):(pm*j)
-		Ctrace[i, j] = tr(mc[inds1, inds2])
-		Ctrace[j, i] = Ctrace[i, j]
-	end
- end
-
- # Compute truncated SVD of Yhat weighted by Ctrace
- Ctr_1 = sqrt(inv(Ctrace))
- Ytr = tsvd(Yhat*Ctr_1, rank)
- Ytr = Ytr.U*Diagonal(Ytr.S)*Ytr.Vt*sqrt(Ctrace)
+ # Compute truncated SVD of Yhat weighted by 
+ # block-wise trace of mc
+ Ytr = trace_estimate(Yhat, mc, pm, rank)
 
  write(xlog, "All estimators computed. \n\n")
  # Compare distance of estimators to true coefficient matrix via Frobenius norm
@@ -388,7 +405,154 @@ function mgee_rr(nobs::Integer, ngroup::Integer, m::Integer,
  F8 = sqrt(sum((Yresid-Xm*Bm).^2))
  F9 = sqrt(sum((Ytr - Xm*Bm).^2))
 
- [R1, R2, R3, R4, R5, R6, R7, R8, R9, F1, F2, F3, F4, F5, F6, F7, F8, F9]
+ [R1, R2, R3, R4, R5, R6, R7, R8, R9, F1, F2, F3, F4, F5, F6, F7, F8, F9, covdist]
+end
+
+"""
+    dense_gee_estimates(Xm, Xv, Xr, y, g, xlog)
+
+Estimates mean model coefficient matrix Bhat and Cov(vec(Bhat))
+"""
+function dense_gee_estimates(Xm, Xv, Xr, y, g, xlog)
+ 
+ function make_rcov(x1, x2)
+    return [1, abs(x1[2]-x2[2])]
+ end
+
+ m = size(y, 2)
+ pm = size(Xm, 2)
+
+ mm = Array{Union{Nothing, GeneralizedEstimatingEquations2Model}}(nothing, m)
+
+ write(xlog, "Fitting GEE2 models... \n")
+ for j in 1:m
+        mm[j] = fit(GeneralizedEstimatingEquations2Model, Xm, Xv, Xr, y[:, j],
+                        g, make_rcov; corstruct_mean=ExchangeableCor(),
+                        verbosity=0, cor_pair_factor=0.0)
+ end
+
+ write(xlog, "Constructing covariance matrix... \n")
+ vc = vcov(mm...)
+
+ b = Array{Union{Nothing, Vector}}(nothing, m)
+ for j in 1:m
+        b[j] = mm[j].mean_model.pp.beta0
+ end
+
+ Bhat = hcat(b...)
+
+ # Subset full covariance matrix to covariances between mean model parameters
+ np = Int(div(size(vc[1], 1),m))
+ ii = Vector{Union{Nothing,UnitRange{Int64}}}(nothing, m)
+ for j in 1:m
+  ii[j] = (1:pm) .+ np*(j-1)
+ end
+ inds = vcat(ii...)
+ mc = vc[1][inds,inds]
+
+ Bhat, mc
+end
+
+"""
+    tsvd_estimate(X, rank)
+
+Construct a reduced rank estimate of X via truncated SVD
+"""
+function tsvd_estimate(X, rank)
+ Xsvd = tsvd(X, rank)
+ Xsvd = Xsvd.U*Diagonal(Xsvd.S)*Xsvd.Vt
+ Xsvd
+end
+
+"""
+    rr_ols(y, Xm, rank)
+
+Compute classical RR estimate based on OLS
+"""
+function rr_ols(y, Xm, rank)
+ N = size(y, 1)
+ Yols = Xm*inv(Xm'*Xm)*Xm'*y
+ rrhat = (y-Yols)'*(y-Yols) / N
+ Yrr = tsvd_estimate(Yols*sqrt(inv(rrhat)), rank)
+ Yrr*sqrt(rrhat)
+end
+
+"""
+    rr_resid(y, Yhat, rank)
+
+Compute classical RR estimate based on GEE2 fit and residuals
+"""
+function rr_resid(y, Yhat, rank)
+ N = size(y, 1)
+ rrhat = (y-Yhat)'*(y-Yhat) / N
+ Yresid = tsvd_estimate(Yhat*sqrt(inv(rrhat)), rank)
+ Yresid*sqrt(rrhat)
+end
+
+"""
+    kron_estimate(Bhat, mc, rank)
+
+Compute Kronecker product approximation to mc = Cov(vec(Bhat))
+and then construct reduced rank estimator weighted by the product matrices
+"""
+function kron_estimate(Bhat, mc, rank)
+ m = size(Bhat, 2)
+ pm = size(Bhat, 1)
+ 
+ # Compute Kronecker approximation to estimated covariance matrix of Bhat
+ Ccol, Crow = kronapprox(mc, float.(Matrix(I, pm, pm)), m, m, pm, pm)
+
+ # Determine low-rank approximation weighted by estimated
+ # row and column covariances
+ Bkron = rrkron(Bhat, Crow, Ccol, rank)
+ Bkron
+end
+
+"""
+    block_estimate(Bhat, mc, rank)
+
+Compute reduced rank estimator of Bhat weighted by
+diagonal blocks of mc = Cov(vec(Bhat))
+"""
+function block_estimate(Bhat, mc, rank)
+ m = size(Bhat, 2)
+ pm = size(Bhat, 1)
+
+ # Compute block covariance matrix of Bhat
+ Cblock = zeros(m*pm, m*pm)
+ for i in 1:m
+        inds = (1+pm*(i-1)):(pm*i)
+        Cblock[inds, inds] = mc[inds, inds]
+ end
+
+ # Compute best WLRA based on Cblock
+ Bblock, Nblock = rr_sd(Bhat, Cblock, pm, m, rank; tol=1e-8)
+ Bblock, Nblock
+end
+
+"""
+    trace_estimate(Yhat, mc, pm, rank)
+
+Compute reduced rank estimator of Yhat with columns weighted
+by the trace of blocks of mc = Cov(vec(Bhat))
+"""
+function trace_estimate(Yhat, mc, pm, rank)
+ m = size(Yhat, 2)
+
+ Ctrace = zeros(m, m)
+ for i in 1:m
+        inds1 = (1+pm*(i-1)):(pm*i)
+        for j in i:m
+                inds2 = (1+pm*(j-1)):(pm*j)
+                Ctrace[i, j] = tr(mc[inds1, inds2])
+                Ctrace[j, i] = Ctrace[i, j]
+        end
+ end
+
+ # Compute truncated SVD of Yhat weighted by Ctrace
+ Ctr_1 = sqrt(inv(Ctrace))
+ Ytr = tsvd_estimate(Yhat*Ctr_1, rank)
+ Ytr*sqrt(Ctrace)
 end
 
 """
@@ -419,16 +583,20 @@ true mean coefficient matrix and the mean response matrix.
 function sim_gee(nobs::Integer, ngroup::Integer, m::Integer, 
 				pm::Integer, pv::Integer, 
 				rank::Integer, xlog::IOStream;
-				nsim=100, rng=StableRNG(1))
+				nsim=100, rng=StableRNG(1),
+				err_method=0)
  R = zeros(Float64, nsim, 18)
+ Rcov = zeros(Float64, nsim)
  # Coefficients for mean model
  Bm = genrr(pm, m, rank; rng=rng)
  write(xlog, "Beginning simulation: \n")
  for i in 1:nsim
  	write(xlog, string("Iteration #", i, ":\n"))
- 	a = mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=rng)
-	R[i,:] = a
+ 	a = mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=rng,
+			  err_method=err_method)
+	R[i,:] = a[1:18]
+	Rcov[i] = a[19]
 	flush(xlog)
  end
- R, Bm
+ R, Rcov, Bm
 end
