@@ -17,19 +17,6 @@ function randorth(n::Integer,p::Integer; rng=StableRNG(1))
 end
 
 """
-    gencov(n)
-
-Generate a random n x n positive definite covariance matrix.
-Scale uniformly multiplies the eigenvalues which are generated from U(0,1)
-"""
-function gencov(n::Integer; scale=1, rng=StableRNG(1))
- Q = randorth(n,n; rng=rng)
- normalize!.(eachcol(Q))
- S = diagm(scale.*rand(rng, Float64, n))
- Symmetric(Q*S*Q')
-end
-
-"""
     genrr(n, p, r)
 
 Generate a random n x p matrix of rank r < min(n,p)

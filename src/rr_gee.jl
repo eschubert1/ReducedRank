@@ -3,8 +3,16 @@ using EstimatingEquationsRegression
 using Statistics
 using LinearAlgebra
 using Distributions
+using JLD2
+
+using EstimatingEquationsRegression: IdentityLink, LogLink, SigmoidLink
 
 include("rr_sims.jl")
+include("estimators.jl")
+include("metrics.jl")
+include("covariance_generators.jl")
+include("data_generators.jl")
+
 
 """
     mgeedata(nobs, ngroup, m, pm, pv, Bm; rng=StableRNG(1), err_method=0)
@@ -96,213 +104,6 @@ function mgeedata(nobs::Integer, ngroup::Integer, m::Integer, pm::Integer,
 end
 
 """
-    additive_cor(nobs, ngroup, m, Xm, Vy, f, rr)
-
-Generate errors with row-wise and column-wise errors with its associated 
-covariance matrix
-"""
-function additive_cor(nobs, ngroup, m, Xm, Vy, f, rr, h; rng=StableRNG(1))
- N = nobs*ngroup
-
- # Generate additive errors with both row and column correlations.
- # The strength of the
- # correlations is controlled by the parameter 'f'.
- 
- E = zeros(N, m)
- v = repeat(randn(rng, nobs), inner=ngroup)
- ee = randn(rng, N)
- for j in 1:m
- 	u = repeat(randn(rng, nobs), inner=ngroup)
-  	u = sqrt(f)*v + sqrt(1-f)*u
-        e = sqrt(f)*ee + sqrt(1-f)*randn(rng, N)
-        E[:, j] = (sqrt.(Vy[:, j]) .* (sqrt(rr[j])*u +
-                        sqrt(1-rr[j])*e)*sqrt(h[j]))
- end
- V = Vy*Diagonal(h)
- C = _build_cov(V, rr, f, Xm, nobs, ngroup, m)
- E, C
-end
-
-function _build_cov(Vy, rr, f, Xm, nobs, ngroup, m)
- # Construct the theoretical covariance matrix of vec(Bhat)
- R = zeros(ngroup*m, ngroup*m)
- for i in 1:m
- 	ii = (ngroup*(i-1)+1):(ngroup*i)
-	M = rr[i].*ones(ngroup, ngroup)
-	M[diagind(M)] .= 1
-	R[ii,ii] = M
-	for j in (i+1):m
-		jj = (ngroup*(j-1)+1):(ngroup*j)
-		M = sqrt(rr[i]*rr[j]).*ones(ngroup,ngroup)
-		M[diagind(M)] .= 1
-		M = f.*M
-		R[ii,jj] = M
-		R[jj,ii] = M
-	end
- end
-
- pm = size(Xm, 2)
- B = zeros(pm*m, pm*m) # Bread matrix
- M = zeros(pm*m, pm*m) # Meat matrix
-
- for i in 1:nobs
- 	ii = (ngroup*(i-1)+1):(ngroup*i)
-	Vd = vec(Vy[ii,:])
-	Vd = Diagonal(Vd)
-	VRV = sqrt(Vd)*R*sqrt(Vd)
-	for j in 1:m
-		jj = (ngroup*(j-1)+1):(ngroup*j)
-		xx = (pm*(j-1)+1):(pm*j)
-		A = Xm[ii,:]'*inv(VRV[jj,jj])*Xm[ii,:]
-		B[xx,xx] = B[xx,xx] + A
-		M[xx,xx] = M[xx,xx] + A
-		for k in (j+1):m
-			kk = (ngroup*(k-1)+1):(ngroup*k)
-			yy = (pm*(k-1)+1):(pm*k)
-			M[xx,yy] = (M[xx,yy] + 
-				Xm[ii,:]'*inv(VRV[jj,jj])*VRV[jj,kk]*
-				inv(VRV[kk,kk])*Xm[ii,:])
-			M[yy,xx] = M[xx,yy]
-		end
-	end
- end
-
- C = B \ M / B
-
- C
-end
-
-"""
-    _spt_cov(space_lag, time_lag)
-
-Compute a non-separable spatio-temporal covariance function from
-Cressie and Huang 1999, Example 3.
-"""
-function _spt_cov(space_lag, time_lag; a=1, b=1, s2=1)
- d = length(space_lag)
- num = s2*(a^2*time_lag^2 + 1)
- denom = ((a^2*time_lag^2+1)^2 + b^2*(space_lag*space_lag))^((d+1)/2)
- num/denom
-end
-
-"""
-    space_time_cov(s_ix, t_ix)
-
-Compute space time covariance at specified points.
-"""
-function space_time_cov(s_ix, t_ix; parms)
- 
- ns = length(s_ix)
- nt = length(t_ix)
- n = ns*nt
- points = hcat(repeat(s_ix, nt), repeat(t_ix, inner=ns))
-
- a = parms[1]
- b = parms[2]
- s2 = parms[3]
-
- # Compute lags and covariance
- space_lags = zeros(n,n)
- time_lags = zeros(n,n)
- covs = zeros(n,n)
- for i in 1:n
- 	for j in 1:i
-		space_lags[i,j] = abs(points[i,1] - points[j,1])
-		time_lags[i,j] = abs(points[i,2] - points[j,2])
-		covs[i,j] = _spt_cov(space_lags[i,j], time_lags[i,j];
-						      a=a, b=b, s2=s2)
-		
-		space_lags[j,i] = space_lags[i,j]
-		time_lags[j,i] = time_lags[i,j]
-		covs[j,i] = covs[i,j]
-	end
- end
-
- covs
-end
-
-"""
-    generate_errors(groups, m, Xm)
-
-Generate clustered errors with cluster membership defined by groups.
-m is the number of response variables.
-
-If a cluster Y is of size n x m, the generated covariance matrix corresponds to
-Cov(vec(Y)) of size nm x nm
-"""
-function generate_errors(groups, m, Xm; cov_method="general", parms=(1,2),
-				 	rng=StableRNG(1))
- N = length(groups)
- group_ids = unique(groups)
- E = zeros(N, m)
- pm = size(Xm, 2)
- B = zeros(pm*m, pm*m)
- M = zeros(pm*m, pm*m)
- for i in group_ids
- 	ii = findall(j->(j==i), groups)
- 	ng = length(ii)
-	if cov_method == "spacetime"
-		C = Symmetric(space_time_cov(1:ng, 1:m; parms=parms))
-	else 
-		C = Symmetric(gencov(ng*m))
-	end 
-	for j in 1:m
-		jj = (ng*(j-1)+1):(ng*j)
-		xx = (pm*(j-1)+1):(pm*j)
-		Z = Xm[ii,:]'*inv(C[jj,jj])*Xm[ii,:]
-		B[xx,xx] = B[xx,xx] + Z
-		M[xx,xx] = M[xx,xx] + Z
-		for k in (j+1):m
-			kk = (ng*(k-1)+1):(ng*k)
-			yy = (pm*(k-1)+1):(pm*k)
-                        M[xx,yy] = (M[xx,yy] + Xm[ii,:]'*inv(C[jj,jj])*
-					     C[jj,kk]*inv(C[kk,kk])*Xm[ii,:])
-                        M[yy,xx] = M[xx,yy]
-		end
-	end
-	A = cholesky(C)
- 	Eg = A.L*randn(rng, ng*m)
-	Eg = reshape(Eg, (ng, m))
-	E[ii, :] = Eg
- end
- Cov_B = B \ M / B
- E, Cov_B
-end
-
-"""
-    sas(A, B)
-
-Computes the Singular Angle Similarity between two matrices, A and B, 
-of the same size.
-
-Singular Angle Similarity is defined in Albers et al. (2024), available 
-at https://arxiv.org/abs/2403.17687.
-"""
-function sas(A, B)
- Asvd = svd(A)
- Bsvd = svd(B)
- m = min(size(A)[1], size(A)[2])
- left1 = zeros(m)
- right1 = zeros(m)
- left2 = zeros(m)
- right2 = zeros(m)
- angles = zeros(m)
- weights = zeros(m)
- for i in 1:m
- 	left1[i] = acos(clamp(Asvd.U[:, i]⋅Bsvd.U[:,i], -1, 1))
-	right1[i] = acos(clamp(Asvd.V[:, i]⋅Bsvd.V[:,i], -1, 1))
-	left2[i] = acos(clamp(-Asvd.U[:, i]⋅Bsvd.U[:,i], -1, 1))
-	right2[i] = acos(clamp(-Asvd.V[:, i]⋅Bsvd.V[:,i], -1, 1))
- 	angles[i] = min((left1[i]+right1[i]), (left2[i]+right2[i]))
-	weights[i] = sqrt(Asvd.S[i]*Bsvd.S[i])
- end
- angles = angles ./ 2
- delta = 1 .- angles ./ (pi/2)
- sas = sum(weights .* delta)/sum(weights)
- sas
-end
-
-"""
     mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=StableRNG(1))
 
 Evaluate the performance of several reduced rank estimators for the
@@ -337,16 +138,23 @@ the covariance matrix of Bhat
 # See also 
 [`sim_gee`](@ref), [`mgeedata`](@ref)
 """
-function mgee_rr(nobs::Integer, ngroup::Integer, m::Integer, 
-				pm::Integer, pv::Integer, rank::Integer,
-				Bm::AbstractMatrix, xlog::IOStream;
-				rng=StableRNG(1), err_method=0)
- N = nobs*ngroup
- write(xlog, "Generating data... \n")
- y, Bm, Bv, Xm, Xv, Xr, g, C = mgeedata(nobs, ngroup, m, pm, pv, Bm;
-					      rng=rng, err_method=err_method)
+function mgee_rr(nobs::Integer, ngroup::Integer,
+				y::AbstractMatrix, Xm::AbstractMatrix, 
+				Xv::AbstractMatrix, Xr::AbstractMatrix,
+				rank::Integer, Bm::AbstractMatrix, 
+				C::AbstractMatrix, CovB::AbstractMatrix,
+				xlog::IOStream;
+				rng=StableRNG(1))
 
- N = ngroup*nobs
+ N = nobs*ngroup
+ m = size(y, 2)
+ pm = size(Xm, 2)
+ pv = size(Xv, 2)
+ write(xlog, "Generating data... \n")
+ #y, Bm, Bv, Xm, Xv, Xr, g, C = mgeedata(nobs, ngroup, m, pm, pv, Bm;
+ #					      rng=rng, err_method=err_method)
+
+ #y = generate_gee2_response(nobs, ngroup, Xm, Bm, C; rng=rng)
 
  # Estimate mean coefficents and covariance matrix
  Bhat, mc = dense_gee_estimates(Xm, Xv, Xr, y, g, xlog)
@@ -384,175 +192,132 @@ function mgee_rr(nobs::Integer, ngroup::Integer, m::Integer,
 
  write(xlog, "All estimators computed. \n\n")
  # Compare distance of estimators to true coefficient matrix via Frobenius norm
- R1 = sqrt(sum((Bhat-Bm).^2))
- R2 = sqrt(sum((Brr-Bm).^2))
- R3 = sqrt(sum((Bsvd-Bm).^2))
- R4 = sqrt(sum(((Xm \ Ysvd)-Bm).^2))
- R5 = sqrt(sum((Bkron-Bm).^2))
- R6 = sqrt(sum((Bblock-Bm).^2))
- R7 = sqrt(sum(((Xm \ Yrr)-Bm).^2))
- R8 = sqrt(sum(((Xm \ Yresid)-Bm).^2))
- R9 = sqrt(sum(((Xm \ Ytr)-Bm).^2))
+ R1 = frobenius_distance(Bhat,Bm)
+ R2 = frobenius_distance(Brr,Bm)
+ R3 = frobenius_distance(Bsvd,Bm)
+ R4 = frobenius_distance((Xm \ Ysvd),Bm)
+ R5 = frobenius_distance(Bkron,Bm)
+ R6 = frobenius_distance(Bblock,Bm)
+ R7 = frobenius_distance((Xm \ Yrr),Bm)
+ R8 = frobenius_distance((Xm \ Yresid),Bm)
+ R9 = frobenius_distance((Xm \ Ytr),Bm)
 
  # Compare distance of estimators to mean of response via Frobenius norm
- F1 = sqrt(sum((Xm*(Bhat-Bm)).^2))
- F2 = sqrt(sum((Xm*(Brr-Bm)).^2))
- F3 = sqrt(sum((Xm*(Bsvd-Bm)).^2))
- F4 = sqrt(sum((Ysvd - Xm*Bm).^2))
- F5 = sqrt(sum((Xm*(Bkron-Bm)).^2))
- F6 = sqrt(sum((Xm*(Bblock-Bm)).^2))
- F7 = sqrt(sum((Yrr - Xm*Bm).^2))
- F8 = sqrt(sum((Yresid-Xm*Bm).^2))
- F9 = sqrt(sum((Ytr - Xm*Bm).^2))
+ F1 = frobenius_distance(Xm*Bhat, Xm*Bm)
+ F2 = frobenius_distance(Xm*Brr, Xm*Bm)
+ F3 = frobenius_distance(Xm*Bsvd, Xm*Bm)
+ F4 = frobenius_distance(Ysvd, Xm*Bm)
+ F5 = frobenius_distance(Xm*Bkron, Xm*Bm)
+ F6 = frobenius_distance(Xm*Bblock, Xm*Bm)
+ F7 = frobenius_distance(Yrr, Xm*Bm)
+ F8 = frobenius_distance(Yresid, Xm*Bm)
+ F9 = frobenius_distance(Ytr, Xm*Bm)
 
  [R1, R2, R3, R4, R5, R6, R7, R8, R9, F1, F2, F3, F4, F5, F6, F7, F8, F9, covdist]
 end
 
 """
-    dense_gee_estimates(Xm, Xv, Xr, y, g, xlog)
+    compute_estimates(nobs, ngroup, y, g, Xm, Xv, Xr, rank, xlog)
 
-Estimates mean model coefficient matrix Bhat and Cov(vec(Bhat))
+Compute several reduced rank estimators for the mean coefficient matrix
 """
-function dense_gee_estimates(Xm, Xv, Xr, y, g, xlog)
- 
- function make_rcov(x1, x2)
-    return [1, abs(x1[2]-x2[2])]
- end
+function compute_estimates(nobs::Integer, ngroup::Integer, 
+				y::AbstractMatrix, g::Vector, Xm::AbstractMatrix, 
+				Xv::AbstractMatrix, Xr::AbstractMatrix,
+				rank::Integer, make_rcov, xlog::IOStream;
+				link_mean=IdentityLink(), link_scale=LogLink(),
+				link_cor=SigmoidLink(-1,1),
+				rng=StableRNG(1))
 
+ N = nobs*ngroup
  m = size(y, 2)
  pm = size(Xm, 2)
+ pv = size(Xv, 2)
+ write(xlog, "Generating data... \n")
 
- mm = Array{Union{Nothing, GeneralizedEstimatingEquations2Model}}(nothing, m)
+ # Estimate mean coefficents and covariance matrix
+ Bhat, mc = dense_gee_estimates(Xm, Xv, Xr, y, g, make_rcov, xlog;
+						link_mean=link_mean,
+						link_scale=link_scale,
+						link_cor=link_cor)
 
- write(xlog, "Fitting GEE2 models... \n")
- for j in 1:m
-        mm[j] = fit(GeneralizedEstimatingEquations2Model, Xm, Xv, Xr, y[:, j],
-                        g, make_rcov; corstruct_mean=ExchangeableCor(),
-                        verbosity=0, cor_pair_factor=0.0)
- end
-
- write(xlog, "Constructing covariance matrix... \n")
- vc = vcov(mm...)
-
- b = Array{Union{Nothing, Vector}}(nothing, m)
- for j in 1:m
-        b[j] = mm[j].mean_model.pp.beta0
- end
-
- Bhat = hcat(b...)
-
- # Subset full covariance matrix to covariances between mean model parameters
- np = Int(div(size(vc[1], 1),m))
- ii = Vector{Union{Nothing,UnitRange{Int64}}}(nothing, m)
- for j in 1:m
-  ii[j] = (1:pm) .+ np*(j-1)
- end
- inds = vcat(ii...)
- mc = vc[1][inds,inds]
-
- Bhat, mc
-end
-
-"""
-    tsvd_estimate(X, rank)
-
-Construct a reduced rank estimate of X via truncated SVD
-"""
-function tsvd_estimate(X, rank)
- Xsvd = tsvd(X, rank)
- Xsvd = Xsvd.U*Diagonal(Xsvd.S)*Xsvd.Vt
- Xsvd
-end
-
-"""
-    rr_ols(y, Xm, rank)
-
-Compute classical RR estimate based on OLS
-"""
-function rr_ols(y, Xm, rank)
- N = size(y, 1)
- Yols = Xm*inv(Xm'*Xm)*Xm'*y
- rrhat = (y-Yols)'*(y-Yols) / N
- Yrr = tsvd_estimate(Yols*sqrt(inv(rrhat)), rank)
- Yrr*sqrt(rrhat)
-end
-
-"""
-    rr_resid(y, Yhat, rank)
-
-Compute classical RR estimate based on GEE2 fit and residuals
-"""
-function rr_resid(y, Yhat, rank)
- N = size(y, 1)
- rrhat = (y-Yhat)'*(y-Yhat) / N
- Yresid = tsvd_estimate(Yhat*sqrt(inv(rrhat)), rank)
- Yresid*sqrt(rrhat)
-end
-
-"""
-    kron_estimate(Bhat, mc, rank)
-
-Compute Kronecker product approximation to mc = Cov(vec(Bhat))
-and then construct reduced rank estimator weighted by the product matrices
-"""
-function kron_estimate(Bhat, mc, rank)
- m = size(Bhat, 2)
- pm = size(Bhat, 1)
+ write(xlog, "Computing Full WLRA... \n")
+ # Compute WLRA to Bhat using the estimated covariance of Bhat
+ Brr, Nrr = rr_sd(Bhat, mc, pm, m, rank; tol=1e-8)
  
- # Compute Kronecker approximation to estimated covariance matrix of Bhat
- Ccol, Crow = kronapprox(mc, float.(Matrix(I, pm, pm)), m, m, pm, pm)
+ # Compute truncated singular value decomposition of Bhat
+ Bsvd = tsvd_estimate(Bhat, rank)
 
- # Determine low-rank approximation weighted by estimated
- # row and column covariances
- Bkron = rrkron(Bhat, Crow, Ccol, rank)
- Bkron
-end
+ # Compute truncated singular value decomposition of fitted values
+ Yhat = Xm*Bhat
+ Ysvd = tsvd_estimate(Yhat, rank)
 
-"""
-    block_estimate(Bhat, mc, rank)
+ # Compute classical RR estimator
+ Yrr = rr_ols(y, Xm, rank)
 
-Compute reduced rank estimator of Bhat weighted by
-diagonal blocks of mc = Cov(vec(Bhat))
-"""
-function block_estimate(Bhat, mc, rank)
- m = size(Bhat, 2)
- pm = size(Bhat, 1)
+ # Compute residual weighted GEE based estimator
+ Yresid = rr_resid(y, Yhat, rank)
 
- # Compute block covariance matrix of Bhat
- Cblock = zeros(m*pm, m*pm)
- for i in 1:m
-        inds = (1+pm*(i-1)):(pm*i)
-        Cblock[inds, inds] = mc[inds, inds]
- end
+ write(xlog, "Computing Kronecker approximation... \n")
+ Bkron = kron_estimate(Bhat, mc, rank)
 
+ write(xlog, "Computing Block WLRA... \n")
  # Compute best WLRA based on Cblock
- Bblock, Nblock = rr_sd(Bhat, Cblock, pm, m, rank; tol=1e-8)
- Bblock, Nblock
+ Bblock, Nblock = block_estimate(Bhat, mc, rank)
+
+ # Compute truncated SVD of Yhat weighted by 
+ # block-wise trace of mc
+ Ytr = trace_estimate(Yhat, mc, pm, rank)
+
+ write(xlog, "All estimators computed. \n\n")
+ Bhat, Brr, Bsvd, Ysvd, Bkron, Bblock, Yrr, Yresid, Ytr, mc
 end
 
 """
-    trace_estimate(Yhat, mc, pm, rank)
+    compute_metrics(estimators, Xm, Bm, CovB)
 
-Compute reduced rank estimator of Yhat with columns weighted
-by the trace of blocks of mc = Cov(vec(Bhat))
+Compute Frobenius distance
+for several reduced rank estimators of the mean coefficient matrix
 """
-function trace_estimate(Yhat, mc, pm, rank)
- m = size(Yhat, 2)
+function compute_metrics(estimators, Xm, Bm, CovB)
+# Unpack estimators
+ Bhat = estimators[1]
+ Brr = estimators[2]
+ Bsvd = estimators[3]
+ Ysvd = estimators[4]
+ Bkron = estimators[5]
+ Bblock = estimators[6]
+ Yrr = estimators[7]
+ Yresid = estimators[8]
+ Ytr = estimators[9]
+ mc = estimators[10]
 
- Ctrace = zeros(m, m)
- for i in 1:m
-        inds1 = (1+pm*(i-1)):(pm*i)
-        for j in i:m
-                inds2 = (1+pm*(j-1)):(pm*j)
-                Ctrace[i, j] = tr(mc[inds1, inds2])
-                Ctrace[j, i] = Ctrace[i, j]
-        end
- end
+ # Compare estimated covariance matrix to population covariance matrix
+ covdist = sqrt(sum((CovB-mc).^2))
 
- # Compute truncated SVD of Yhat weighted by Ctrace
- Ctr_1 = sqrt(inv(Ctrace))
- Ytr = tsvd_estimate(Yhat*Ctr_1, rank)
- Ytr*sqrt(Ctrace)
+ # Compare distance of estimators to true coefficient matrix via Frobenius norm
+ R1 = frobenius_distance(Bhat,Bm)
+ R2 = frobenius_distance(Brr,Bm)
+ R3 = frobenius_distance(Bsvd,Bm)
+ R4 = frobenius_distance((Xm \ Ysvd),Bm)
+ R5 = frobenius_distance(Bkron,Bm)
+ R6 = frobenius_distance(Bblock,Bm)
+ R7 = frobenius_distance((Xm \ Yrr),Bm)
+ R8 = frobenius_distance((Xm \ Yresid),Bm)
+ R9 = frobenius_distance((Xm \ Ytr),Bm)
+
+ # Compare distance of estimators to mean of response via Frobenius norm
+ F1 = frobenius_distance(Xm*Bhat, Xm*Bm)
+ F2 = frobenius_distance(Xm*Brr, Xm*Bm)
+ F3 = frobenius_distance(Xm*Bsvd, Xm*Bm)
+ F4 = frobenius_distance(Ysvd, Xm*Bm)
+ F5 = frobenius_distance(Xm*Bkron, Xm*Bm)
+ F6 = frobenius_distance(Xm*Bblock, Xm*Bm)
+ F7 = frobenius_distance(Yrr, Xm*Bm)
+ F8 = frobenius_distance(Yresid, Xm*Bm)
+ F9 = frobenius_distance(Ytr, Xm*Bm)
+
+ [R1, R2, R3, R4, R5, R6, R7, R8, R9, F1, F2, F3, F4, F5, F6, F7, F8, F9, covdist]
 end
 
 """
@@ -584,19 +349,77 @@ function sim_gee(nobs::Integer, ngroup::Integer, m::Integer,
 				pm::Integer, pv::Integer, 
 				rank::Integer, xlog::IOStream;
 				nsim=100, rng=StableRNG(1),
-				err_method=0)
+				err_method="general")
+
+ scenario_parameters = (nobs, ngroup, m, pm, pv, rank, nsim, err_method)
+
  R = zeros(Float64, nsim, 18)
  Rcov = zeros(Float64, nsim)
  # Coefficients for mean model
  Bm = genrr(pm, m, rank; rng=rng)
+
+# Define link functions for GEE2 model
+mean_link=IdentityLink()
+scale_link=LogLink()
+cor_link = SigmoidLink(-1,1)
+
+make_rcov = function(err_method)
+	if err_method == "additive"
+		return function(x1, x2)
+			return [1, abs(x1[1]-x2[1])]
+		end
+	elseif err_method == "space_time"
+		return function(x1, x2)
+			return [1, (x1[1]-x2[1])^2]
+		end
+	else
+		return function(x1, x2)
+			return [1, abs(x1[1]-x2[1])]
+		end
+	end
+end
+
+ # Covariance matrix for a cluster of size ngroup x m
+ if err_method == "additive"
+	parms = (0.9, range(0.1, 0.9, length=m), range(1,m*ngroup,m*ngroup))
+ elseif err_method == "space_time"
+	parms = (2, 3, 1, range(1,m*ngroup,m*ngroup))
+	cor_link = StableInverseLink()
+ else
+	parms = range(1,m*ngroup,m*ngroup)
+ end
+ C = generate_cluster_cov(ngroup, m; err_method=err_method, 
+							parms=parms, rng=rng)
+
+ # Generate design matrices
+ Xm, Xv, Xr = generate_gee2_covariates(nobs, ngroup, pm, pv; rng=rng)
+
+ # Construct theoretical covariance of vec(Bhat)
+ CovB = generate_cov_bhat(nobs, ngroup, m, Xm, C)
+
+ true_coefficients = (Bm, C, CovB)
+
+ covariates = (Xm, Xv, Xr)
+
+ low_rank_results = []
+
+ grouping = repeat(1:nobs, inner=ngroup)
+
  write(xlog, "Beginning simulation: \n")
  for i in 1:nsim
  	write(xlog, string("Iteration #", i, ":\n"))
- 	a = mgee_rr(nobs, ngroup, m, pm, pv, rank, Bm, xlog; rng=rng,
-			  err_method=err_method)
+	y = generate_gee2_response(nobs, ngroup, Xm, Bm, C; rng=rng)
+ 	estimators = compute_estimates(nobs, ngroup, y, grouping, Xm, Xv, Xr, rank,
+									 make_rcov(err_method), xlog; link_mean = mean_link,
+									 link_scale = scale_link,
+									 link_cor = cor_link,
+									 rng=rng)
+	push!(low_rank_results, (i,estimators...))
+	a = compute_metrics(estimators, Xm, Bm, CovB)
 	R[i,:] = a[1:18]
 	Rcov[i] = a[19]
 	flush(xlog)
  end
- R, Rcov, Bm
+ @save "artifacts/estimators/sim_gee2_$(nobs)_$(ngroup)_$(m)_$(err_method)_$(rank).jld2" scenario_parameters true_coefficients covariates low_rank_results
+ R, Rcov, Bm, C, CovB
 end

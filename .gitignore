@@ -3,3 +3,13 @@ slurm-*
 
 # Ignore batch files
 *.sbat
+
+# Ignore artifacts
+artifacts/*.txt
+artifacts/*.jld2
+
+# Ignore all JLD2 files
+*.jld2
+
+# Ignore logs
+logs/*.txt
