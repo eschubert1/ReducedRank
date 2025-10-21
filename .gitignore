@@ -16,3 +16,6 @@ logs/*.txt
 
 # Ignore csv files
 *.csv
+
+# Ignore results files
+results/*.txt
