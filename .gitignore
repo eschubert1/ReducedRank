@@ -13,3 +13,6 @@ artifacts/*.jld2
 
 # Ignore logs
 logs/*.txt
+
+# Ignore csv files
+*.csv
